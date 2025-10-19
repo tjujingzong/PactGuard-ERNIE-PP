@@ -1,0 +1,73 @@
+{
+  "file_path": "C:\\Users\\ljz\\AppData\\Local\\Temp\\tmppo1bdnur.docx",
+  "party_type": "甲方",
+  "expert_responses": {
+    "legal": {
+      "artifacts": [
+        {
+          "parts": [
+            {
+              "type": "text",
+              "text": "{\"artifacts\": [{\"parts\": [{\"type\": \"text\", \"text\": \"[]\"}]}], \"status\": {\"state\": \"completed\"}}"
+            }
+          ]
+        }
+      ],
+      "status": {
+        "state": "completed"
+      }
+    },
+    "business": {
+      "artifacts": [
+        {
+          "parts": [
+            {
+              "type": "text",
+              "text": "{\"artifacts\": [{\"parts\": [{\"type\": \"text\", \"text\": \"[{\\\"类型\\\": \\\"解析结果\\\", \\\"内容\\\": \\\"请你明确一下具体需求，比如是对这段合同内容进行润色、提取关键条款、生成合同模板等，以便我按照要求为你生成合同内容。\\\"}]\"}]}], \"status\": {\"state\": \"completed\"}}"
+            }
+          ]
+        }
+      ],
+      "status": {
+        "state": "completed"
+      }
+    },
+    "format": {
+      "artifacts": [
+        {
+          "parts": [
+            {
+              "type": "text",
+              "text": "{\"artifacts\": [{\"parts\": [{\"type\": \"text\", \"text\": \"[]\"}]}], \"status\": {\"state\": \"completed\"}}"
+            }
+          ]
+        }
+      ],
+      "status": {
+        "state": "completed"
+      }
+    }
+  },
+  "issues": [
+    {
+      "类型": "解析结果",
+      "内容": "请你明确一下具体需求，比如是对这段合同内容进行润色、提取关键条款、生成合同模板等，以便我按照要求为你生成合同内容。"
+    }
+  ],
+  "analysis": {
+    "artifacts": [
+      {
+        "parts": [
+          {
+            "type": "text",
+            "text": "null"
+          }
+        ]
+      }
+    ],
+    "status": {
+      "state": "completed"
+    }
+  },
+  "output_file": "contract_analysis_results\\contract_analysis_20251019_171605.json"
+}

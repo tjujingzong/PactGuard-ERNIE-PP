@@ -1,0 +1,68 @@
+{
+  "file_path": "C:\\Users\\ljz\\AppData\\Local\\Temp\\tmp2gh61wfz.docx",
+  "party_type": "乙方",
+  "expert_responses": {
+    "legal": {
+      "artifacts": [
+        {
+          "parts": [
+            {
+              "type": "text",
+              "text": "{\"artifacts\": [{\"parts\": [{\"type\": \"text\", \"text\": \"[]\"}]}], \"status\": {\"state\": \"completed\"}}"
+            }
+          ]
+        }
+      ],
+      "status": {
+        "state": "completed"
+      }
+    },
+    "business": {
+      "artifacts": [
+        {
+          "parts": [
+            {
+              "type": "text",
+              "text": "{\"artifacts\": [{\"parts\": [{\"type\": \"text\", \"text\": \"[]\"}]}], \"status\": {\"state\": \"completed\"}}"
+            }
+          ]
+        }
+      ],
+      "status": {
+        "state": "completed"
+      }
+    },
+    "format": {
+      "artifacts": [
+        {
+          "parts": [
+            {
+              "type": "text",
+              "text": "{\"artifacts\": [{\"parts\": [{\"type\": \"text\", \"text\": \"[\\\"本合同为固定期限劳动合同，自2025年3月1日起至2028年2月28日止，期限三年。\\\", \\\"试用期自2025年3月1日至2025年10月31日，共8个月。\\\", \\\"合同期满后，如甲方未作书面说明，视为本合同自动顺延至甲方另行通知之日。\\\"]\"}]}], \"status\": {\"state\": \"completed\"}}"
+            }
+          ]
+        }
+      ],
+      "status": {
+        "state": "completed"
+      }
+    }
+  },
+  "issues": [],
+  "analysis": {
+    "artifacts": [
+      {
+        "parts": [
+          {
+            "type": "text",
+            "text": "{\"error\": \"未找到需要分析的问题\", \"risk_score\": 0, \"risk_level\": \"低\", \"analysis\": null}"
+          }
+        ]
+      }
+    ],
+    "status": {
+      "state": "completed"
+    }
+  },
+  "output_file": "contract_analysis_results\\contract_analysis_20251019_170401.json"
+}
