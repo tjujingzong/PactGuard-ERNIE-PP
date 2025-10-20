@@ -7,13 +7,25 @@ import logging
 import subprocess
 import threading
 import multiprocessing
+import sys
 from typing import Dict, List, Optional
 
 import streamlit as st
 import requests
 
-# 配置日志
+# 配置日志 - 使用stderr确保在Streamlit环境下也能显示
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stderr),  # 使用stderr输出到控制台
+    ],
+    force=True  # 强制重新配置日志
+)
 logger = logging.getLogger(__name__)
+
+# 添加一个测试日志
+logger.info("=== Streamlit应用启动，日志系统已配置 ===")
 
 
 # -----------------------------
@@ -41,18 +53,22 @@ def start_mcp_service():
     """启动MCP服务"""
     try:
         if "mcp" not in service_processes or service_processes["mcp"].poll() is not None:
-            # 启动MCP服务
+            print("=== 正在启动MCP服务... ===")
+            logger.info("正在启动MCP服务...")
+            # 启动MCP服务，直接继承父进程的stdout和stderr
             process = subprocess.Popen(
                 ["python", "mcp_service.py"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=sys.stdout,  # 直接输出到控制台
+                stderr=sys.stderr,  # 错误输出到控制台
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
             )
             service_processes["mcp"] = process
-            logger.info("MCP服务已启动")
+            print(f"=== MCP服务已启动，进程ID: {process.pid} ===")
+            logger.info(f"MCP服务已启动，进程ID: {process.pid}")
             time.sleep(3)  # 等待服务启动
         return True
     except Exception as e:
+        print(f"=== 启动MCP服务失败: {str(e)} ===")
         logger.error(f"启动MCP服务失败: {str(e)}")
         return False
 
@@ -60,23 +76,28 @@ def start_agents_service():
     """启动所有Agent服务"""
     try:
         if "agents" not in service_processes or service_processes["agents"].poll() is not None:
-            # 启动所有Agent
+            print("=== 正在启动Agent服务... ===")
+            logger.info("正在启动Agent服务...")
+            # 启动所有Agent，直接继承父进程的stdout和stderr
             process = subprocess.Popen(
                 ["python", "agents.py", "all"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=sys.stdout,  # 直接输出到控制台
+                stderr=sys.stderr,  # 错误输出到控制台
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
             )
             service_processes["agents"] = process
-            logger.info("Agent服务已启动")
+            print(f"=== Agent服务已启动，进程ID: {process.pid} ===")
+            logger.info(f"Agent服务已启动，进程ID: {process.pid}")
             time.sleep(5)  # 等待所有Agent启动
         return True
     except Exception as e:
+        print(f"=== 启动Agent服务失败: {str(e)} ===")
         logger.error(f"启动Agent服务失败: {str(e)}")
         return False
 
 def start_all_services():
     """启动所有服务"""
+    print("=== 正在启动所有服务... ===")
     logger.info("正在启动所有服务...")
     
     # 启动MCP服务
@@ -87,27 +108,39 @@ def start_all_services():
     if not start_agents_service():
         return False
     
+    print("=== 所有服务启动完成 ===")
     logger.info("所有服务启动完成")
     return True
 
 def stop_all_services():
     """停止所有服务"""
+    print("=== 正在停止所有服务... ===")
     logger.info("正在停止所有服务...")
     
     for service_name, process in service_processes.items():
         try:
             if process.poll() is None:  # 进程仍在运行
+                print(f"=== 正在停止{service_name}服务 (PID: {process.pid})... ===")
+                logger.info(f"正在停止{service_name}服务 (PID: {process.pid})...")
                 process.terminate()
                 process.wait(timeout=5)
+                print(f"=== {service_name}服务已停止 ===")
                 logger.info(f"{service_name}服务已停止")
+            else:
+                print(f"=== {service_name}服务已经停止 ===")
+                logger.info(f"{service_name}服务已经停止")
         except Exception as e:
+            print(f"=== 停止{service_name}服务失败: {str(e)} ===")
             logger.error(f"停止{service_name}服务失败: {str(e)}")
             try:
+                print(f"=== 强制终止{service_name}服务... ===")
+                logger.warning(f"强制终止{service_name}服务...")
                 process.kill()
             except:
                 pass
     
     service_processes.clear()
+    print("=== 所有服务已停止 ===")
     logger.info("所有服务已停止")
 
 def check_services() -> Dict[str, bool]:
@@ -130,6 +163,34 @@ def save_uploaded_file(uploaded_file) -> Optional[str]:
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(uploaded_file.read())
         return tmp.name
+
+
+def get_sample_files() -> List[str]:
+    """获取样例文件列表"""
+    contracts_dir = "contracts"
+    if not os.path.exists(contracts_dir):
+        return []
+    
+    sample_files = []
+    for file in os.listdir(contracts_dir):
+        file_path = os.path.join(contracts_dir, file)
+        if os.path.isfile(file_path) and file.lower().endswith(('.pdf', '.docx', '.txt', '.doc')):
+            sample_files.append(file_path)
+    
+    return sample_files
+
+
+def copy_sample_file(sample_path: str) -> Optional[str]:
+    """复制样例文件到临时目录"""
+    try:
+        suffix = os.path.splitext(sample_path)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            with open(sample_path, 'rb') as src:
+                tmp.write(src.read())
+            return tmp.name
+    except Exception as e:
+        logger.error(f"复制样例文件失败: {str(e)}")
+        return None
 
 
 def preview_file_content(file_path: str) -> str:
@@ -747,17 +808,30 @@ def render_analysis(analysis: Optional[Dict]):
 # -----------------------------
 st.set_page_config(page_title="合同审查可视化", layout="wide")
 
+# 页面首次加载时自动启动服务
+if 'services_started' not in st.session_state:
+    st.session_state.services_started = True
+    print("=== Streamlit页面首次加载，自动启动服务 ===")
+    logger.info("Streamlit页面首次加载，自动启动服务")
+    
+    # 自动启动所有服务
+    if start_all_services():
+        print("=== 服务自动启动成功 ===")
+        logger.info("服务自动启动成功")
+    else:
+        print("=== 服务自动启动失败 ===")
+        logger.error("服务自动启动失败")
+
 # 顶部工具栏
 col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 with col1:
     st.title("📄 合同审查系统")
 with col2:
     if st.button("🚀 启动服务", help="启动所有后台服务"):
-        with st.spinner("正在启动服务..."):
-            if start_all_services():
-                st.success("所有服务启动成功！")
-            else:
-                st.error("服务启动失败，请检查日志")
+        if start_all_services():
+            st.success("所有服务启动成功！")
+        else:
+            st.error("服务启动失败，请检查日志")
 with col3:
     if st.button("🔧 服务状态", help="检查服务状态"):
         status = check_services()
@@ -770,8 +844,56 @@ with col4:
         stop_all_services()
         st.info("所有服务已停止")
 
-# 文件上传区域
-uploaded = st.file_uploader("📁 上传合同文件 (PDF/DOCX/TXT/DOC)", type=["pdf", "docx", "txt", "doc"])
+# 文件选择区域
+st.subheader("📁 选择合同文件")
+
+# 创建选项卡
+tab1, tab2 = st.tabs(["📤 上传文件", "📋 选择样例"])
+
+with tab1:
+    uploaded = st.file_uploader("上传合同文件 (PDF/DOCX/TXT/DOC)", type=["pdf", "docx", "txt", "doc"])
+
+with tab2:
+    sample_files = get_sample_files()
+    if sample_files:
+        st.write("从以下样例文件中选择一个进行测试：")
+        
+        # 显示样例文件列表
+        for i, sample_path in enumerate(sample_files):
+            file_name = os.path.basename(sample_path)
+            col1, col2, col3 = st.columns([3, 1, 1])
+            
+            with col1:
+                st.write(f"📄 {file_name}")
+            
+            with col2:
+                if st.button(f"预览", key=f"preview_{i}"):
+                    preview_content = preview_file_content(sample_path)
+                    st.session_state.sample_preview = preview_content
+                    st.session_state.sample_file_name = file_name
+            
+            with col3:
+                if st.button(f"选择", key=f"select_{i}", type="primary"):
+                    # 复制样例文件到临时目录
+                    temp_path = copy_sample_file(sample_path)
+                    if temp_path:
+                        st.session_state.saved_file_path = temp_path
+                        st.session_state.file_name = file_name
+                        st.session_state.preview_content = preview_file_content(temp_path)
+                        st.session_state.selected_sample = sample_path
+                        st.success(f"已选择样例文件: {file_name}")
+                        st.rerun()
+                    else:
+                        st.error("选择样例文件失败")
+        
+        # 显示预览内容
+        if hasattr(st.session_state, 'sample_preview'):
+            st.divider()
+            st.write(f"**{st.session_state.sample_file_name} 预览:**")
+            st.text_area("文件内容", st.session_state.sample_preview, height=300, disabled=True)
+    else:
+        st.info("contracts 目录下没有找到样例文件")
+        st.write("请将样例文件放在 `contracts/` 目录下，支持格式：PDF, DOCX, TXT, DOC")
 
 # 初始化session state
 if 'analysis_result' not in st.session_state:
@@ -786,14 +908,18 @@ if uploaded:
         st.session_state.saved_file_path = saved_path
         st.session_state.file_name = uploaded.name
         st.session_state.preview_content = preview_file_content(saved_path)
+        # 清除样例选择状态
+        if hasattr(st.session_state, 'selected_sample'):
+            del st.session_state.selected_sample
     else:
         st.error("保存文件失败")
 
 # 运行分析按钮
-if uploaded and st.button("🚀 开始分析", type="primary", use_container_width=True):
+has_file = uploaded or hasattr(st.session_state, 'saved_file_path')
+if has_file and st.button("🚀 开始分析", type="primary", use_container_width=True):
     saved_path = st.session_state.get('saved_file_path')
     if not saved_path:
-        st.error("文件路径丢失，请重新上传")
+        st.error("文件路径丢失，请重新选择文件")
         st.stop()
 
     with st.spinner("正在分析，请稍候..."):
@@ -885,13 +1011,13 @@ if st.session_state.analysis_result:
 
 else:
     # 未分析时的界面
-    if uploaded:
+    if has_file:
         st.info("请点击'开始分析'按钮进行合同审查")
         
         # 显示文件预览
         with st.expander("📄 文件预览", expanded=True):
             st.text_area("文件内容", st.session_state.get('preview_content', ''), height=400, disabled=True)
     else:
-        st.info("请上传合同文件开始分析")
+        st.info("请上传合同文件或选择样例文件开始分析")
 
 

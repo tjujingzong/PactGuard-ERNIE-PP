@@ -24,7 +24,7 @@ pip install -r requirements.txt
 streamlit run ui_app.py
 ```
 
-系统会自动启动所有必要的服务，包括：
+系统会自动启动所有必要的服务（无需点击“启动服务”按钮），包括：
 - MCP文档处理服务
 - AI智能体服务（法律、商业、格式专家）
 - 文档高亮服务
