@@ -822,27 +822,8 @@ if 'services_started' not in st.session_state:
         print("=== 服务自动启动失败 ===")
         logger.error("服务自动启动失败")
 
-# 顶部工具栏
-col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-with col1:
-    st.title("📄 合同审查系统")
-with col2:
-    if st.button("🚀 启动服务", help="启动所有后台服务"):
-        if start_all_services():
-            st.success("所有服务启动成功！")
-        else:
-            st.error("服务启动失败，请检查日志")
-with col3:
-    if st.button("🔧 服务状态", help="检查服务状态"):
-        status = check_services()
-        for name, ok in status.items():
-            st.write(f"{name.upper()}: {'✅' if ok else '❌'}")
-        if not all(status.values()):
-            st.warning("部分服务未就绪")
-with col4:
-    if st.button("⏹️ 停止服务", help="停止所有后台服务"):
-        stop_all_services()
-        st.info("所有服务已停止")
+# 顶部标题
+st.title("📄 合同审查系统")
 
 # 文件选择区域
 st.subheader("📁 选择合同文件")
