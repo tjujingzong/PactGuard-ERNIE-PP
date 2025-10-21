@@ -29,8 +29,8 @@ INTEGRATION_PORT = 7007
 
 try:
     llm_client = OpenAI(
-    api_key="6f83207f504098cd644f75618f9ed9507a5dfa7b",
-    base_url="https://api-o46dk3hfs0z8s7ob.aistudio-app.com/v1"
+    api_key="bce-v3/ALTAK-IS6uG1qXcgDDP9RrmjYD9/ede55d516092e0ca5e9041eab19455df12c7db7f",
+    base_url="https://qianfan.baidubce.com/v2"
 )
     logger.info("AI Studio客户端初始化成功")
 except Exception as e:
@@ -128,12 +128,12 @@ class BaseAgent(A2AServer):
             # 调用大模型
             chat_completion = self.llm_client.chat.completions.create(
                 messages=[
-                    # {'role': 'system', 'content': system_prompt},
+                    {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': user_content}
                 ],
-                model="default",
+                model="ernie-4.5-turbo-128k",
                 temperature=0.7,
-                # response_format={"type": "json_object"}
+                response_format={"type": "json_object"}
             )
             
             content = chat_completion.choices[0].message.content.strip()

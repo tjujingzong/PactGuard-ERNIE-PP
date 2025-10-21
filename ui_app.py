@@ -3,29 +3,10 @@ import json
 import time
 import tempfile
 import base64
-import logging
-import subprocess
-import threading
-import multiprocessing
-import sys
 from typing import Dict, List, Optional
 
 import streamlit as st
 import requests
-
-# 配置日志 - 使用stderr确保在Streamlit环境下也能显示
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stderr),  # 使用stderr输出到控制台
-    ],
-    force=True  # 强制重新配置日志
-)
-logger = logging.getLogger(__name__)
-
-# 添加一个测试日志
-logger.info("=== Streamlit应用启动，日志系统已配置 ===")
 
 
 # -----------------------------
@@ -42,106 +23,11 @@ AGENT_HEALTH_ENDPOINTS = {
     "integrator": "http://localhost:7007/health",
 }
 
-# 服务进程管理
-service_processes = {}
 
 
 # -----------------------------
 # 工具函数
 # -----------------------------
-def start_mcp_service():
-    """启动MCP服务"""
-    try:
-        if "mcp" not in service_processes or service_processes["mcp"].poll() is not None:
-            print("=== 正在启动MCP服务... ===")
-            logger.info("正在启动MCP服务...")
-            # 启动MCP服务，直接继承父进程的stdout和stderr
-            process = subprocess.Popen(
-                ["python", "mcp_service.py"],
-                stdout=sys.stdout,  # 直接输出到控制台
-                stderr=sys.stderr,  # 错误输出到控制台
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
-            )
-            service_processes["mcp"] = process
-            print(f"=== MCP服务已启动，进程ID: {process.pid} ===")
-            logger.info(f"MCP服务已启动，进程ID: {process.pid}")
-            time.sleep(3)  # 等待服务启动
-        return True
-    except Exception as e:
-        print(f"=== 启动MCP服务失败: {str(e)} ===")
-        logger.error(f"启动MCP服务失败: {str(e)}")
-        return False
-
-def start_agents_service():
-    """启动所有Agent服务"""
-    try:
-        if "agents" not in service_processes or service_processes["agents"].poll() is not None:
-            print("=== 正在启动Agent服务... ===")
-            logger.info("正在启动Agent服务...")
-            # 启动所有Agent，直接继承父进程的stdout和stderr
-            process = subprocess.Popen(
-                ["python", "agents.py", "all"],
-                stdout=sys.stdout,  # 直接输出到控制台
-                stderr=sys.stderr,  # 错误输出到控制台
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
-            )
-            service_processes["agents"] = process
-            print(f"=== Agent服务已启动，进程ID: {process.pid} ===")
-            logger.info(f"Agent服务已启动，进程ID: {process.pid}")
-            time.sleep(5)  # 等待所有Agent启动
-        return True
-    except Exception as e:
-        print(f"=== 启动Agent服务失败: {str(e)} ===")
-        logger.error(f"启动Agent服务失败: {str(e)}")
-        return False
-
-def start_all_services():
-    """启动所有服务"""
-    print("=== 正在启动所有服务... ===")
-    logger.info("正在启动所有服务...")
-    
-    # 启动MCP服务
-    if not start_mcp_service():
-        return False
-    
-    # 启动Agent服务
-    if not start_agents_service():
-        return False
-    
-    print("=== 所有服务启动完成 ===")
-    logger.info("所有服务启动完成")
-    return True
-
-def stop_all_services():
-    """停止所有服务"""
-    print("=== 正在停止所有服务... ===")
-    logger.info("正在停止所有服务...")
-    
-    for service_name, process in service_processes.items():
-        try:
-            if process.poll() is None:  # 进程仍在运行
-                print(f"=== 正在停止{service_name}服务 (PID: {process.pid})... ===")
-                logger.info(f"正在停止{service_name}服务 (PID: {process.pid})...")
-                process.terminate()
-                process.wait(timeout=5)
-                print(f"=== {service_name}服务已停止 ===")
-                logger.info(f"{service_name}服务已停止")
-            else:
-                print(f"=== {service_name}服务已经停止 ===")
-                logger.info(f"{service_name}服务已经停止")
-        except Exception as e:
-            print(f"=== 停止{service_name}服务失败: {str(e)} ===")
-            logger.error(f"停止{service_name}服务失败: {str(e)}")
-            try:
-                print(f"=== 强制终止{service_name}服务... ===")
-                logger.warning(f"强制终止{service_name}服务...")
-                process.kill()
-            except:
-                pass
-    
-    service_processes.clear()
-    print("=== 所有服务已停止 ===")
-    logger.info("所有服务已停止")
 
 def check_services() -> Dict[str, bool]:
     status: Dict[str, bool] = {}
@@ -189,7 +75,6 @@ def copy_sample_file(sample_path: str) -> Optional[str]:
                 tmp.write(src.read())
             return tmp.name
     except Exception as e:
-        logger.error(f"复制样例文件失败: {str(e)}")
         return None
 
 
@@ -342,7 +227,6 @@ def call_processor_pipeline(file_path: str) -> Dict:
                     issues_all.extend(issues)
                     
             except Exception as e:
-                logger.error(f"解析{expert_type}专家响应失败: {str(e)}")
                 # 尝试从原始文本中提取问题
                 try:
                     issues = extract_issues_from_text(txt, expert_type)
@@ -678,7 +562,7 @@ def extract_issues_from_text(text: str, expert_type: str) -> List[Dict]:
                     }
                 ]
     except Exception as e:
-        logger.error(f"提取{expert_type}专家问题失败: {str(e)}")
+        pass
     
     return issues
 
@@ -808,19 +692,6 @@ def render_analysis(analysis: Optional[Dict]):
 # -----------------------------
 st.set_page_config(page_title="合同审查可视化", layout="wide")
 
-# 页面首次加载时自动启动服务
-if 'services_started' not in st.session_state:
-    st.session_state.services_started = True
-    print("=== Streamlit页面首次加载，自动启动服务 ===")
-    logger.info("Streamlit页面首次加载，自动启动服务")
-    
-    # 自动启动所有服务
-    if start_all_services():
-        print("=== 服务自动启动成功 ===")
-        logger.info("服务自动启动成功")
-    else:
-        print("=== 服务自动启动失败 ===")
-        logger.error("服务自动启动失败")
 
 # 顶部标题
 st.title("📄 合同审查系统")
