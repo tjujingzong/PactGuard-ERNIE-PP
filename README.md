@@ -21,6 +21,8 @@ pip install -r requirements.txt
 ### 2. 启动系统
 
 ```bash
+python mcp_service.py
+python agents.py all
 streamlit run ui_app.py
 ```
 

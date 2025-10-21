@@ -470,7 +470,7 @@ def render_issues(issues: List[Dict]):
 
 
 def add_highlights_to_text(text: str, issues: List[Dict]) -> str:
-    """为文本添加高亮标记 - 所有问题都高亮显示"""
+    """为文本添加简单标记 - 所有问题都标记显示"""
     if not issues:
         return text
     
@@ -481,20 +481,17 @@ def add_highlights_to_text(text: str, issues: List[Dict]) -> str:
         issue_type = issue.get("类型", "问题")
         
         if clause and clause in highlighted_text:
-            # 根据风险等级选择颜色
+            # 根据风险等级选择标记符号
             if risk_level == "高":
-                color = "#ff4444"  # 红色
-                label = f"高风险-{issue_type}"
+                marker = "🔴【重大风险】"
             elif risk_level == "中":
-                color = "#ff8800"  # 橙色
-                label = f"中风险-{issue_type}"
+                marker = "🟡【一般风险】"
             else:
-                color = "#ffdd00"  # 黄色
-                label = f"低风险-{issue_type}"
+                marker = "🟢【低风险】"
             
-            # 添加高亮标记
-            highlight_html = f'<span style="background-color: {color}; padding: 2px 4px; border-radius: 3px; color: white; font-size: 0.8em; margin: 0 2px;">{label}</span>'
-            highlighted_text = highlighted_text.replace(clause, f"{clause} {highlight_html}")
+            # 添加简单标记
+            marked_text = f"{marker} {clause}"
+            highlighted_text = highlighted_text.replace(clause, marked_text)
     
     return highlighted_text
 
@@ -737,6 +734,108 @@ def render_analysis(analysis: Optional[Dict]):
 # -----------------------------
 st.set_page_config(page_title="合同审查可视化", layout="wide")
 
+# 添加自定义CSS样式
+st.markdown("""
+<style>
+    /* 主容器样式 */
+    .main-container {
+        padding: 20px;
+        background-color: #f8f9fa;
+    }
+    
+    /* 合同文档区域样式 */
+    .contract-document {
+        background-color: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+    
+    /* 风险分析区域样式 */
+    .risk-analysis {
+        background-color: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+    
+    /* 风险卡片样式 */
+    .risk-card {
+        background-color: #fff;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 8px 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: transform 0.2s ease;
+    }
+    
+    .risk-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    
+    /* 风险等级标签样式 */
+    .risk-label {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: bold;
+        color: white;
+    }
+    
+    .risk-high {
+        background-color: #f44336;
+    }
+    
+    .risk-medium {
+        background-color: #ff9800;
+    }
+    
+    .risk-low {
+        background-color: #4caf50;
+    }
+    
+    /* 合同文本高亮样式 */
+    .contract-highlight {
+        background-color: #fff3e0;
+        border: 2px solid #ff9800;
+        border-radius: 4px;
+        padding: 4px 8px;
+        margin: 2px;
+        display: inline-block;
+        position: relative;
+    }
+    
+    .contract-highlight.high-risk {
+        background-color: #ffebee;
+        border-color: #f44336;
+    }
+    
+    .contract-highlight.medium-risk {
+        background-color: #fff3e0;
+        border-color: #ff9800;
+    }
+    
+    .contract-highlight.low-risk {
+        background-color: #e8f5e8;
+        border-color: #4caf50;
+    }
+    
+    /* 按钮样式 */
+    .stButton > button {
+        border-radius: 6px;
+        font-weight: 500;
+    }
+    
+    /* 分栏样式 */
+    .stColumn {
+        padding: 0 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # 顶部标题
 st.title("📄 合同审查系统")
@@ -831,113 +930,112 @@ if has_file and st.button("🚀 开始分析", type="primary", use_container_wid
 # 主界面布局
 if st.session_state.analysis_result:
     result = st.session_state.analysis_result
+    issues = result.get("issues", [])
     
-    # 创建选项卡布局
-    tab1, tab2, tab3, tab4 = st.tabs(["📄 合同内容", "🔍 问题详情", "📊 分析报告", "📋 专家评审"])
+    # 创建左右分栏布局
+    col1, col2 = st.columns([1, 1], gap="large")
     
-    with tab1:
-        st.subheader(f"📄 {st.session_state.file_name}")
+    with col1:
+        # 左侧：合同内容区域
+        st.markdown("### 📄 合同文档")
+        
+        # 合同标题和上传按钮
+        header_col1, header_col2 = st.columns([3, 1])
+        with header_col1:
+            st.markdown(f"**{st.session_state.file_name}**")
+        with header_col2:
+            if st.button("📤 上传合同", key="upload_contract"):
+                st.rerun()
         
         # 显示合同内容（带高亮）
         contract_text = st.session_state.preview_content
-        issues = result.get("issues", [])
         
         # 为问题添加高亮标记
         highlighted_text = add_highlights_to_text(contract_text, issues)
         
-        # 显示高亮后的文本
-        st.markdown(highlighted_text, unsafe_allow_html=True)
+        # 显示标记后的文本
+        st.markdown("### 📄 合同内容（已标记问题）")
+        st.text_area("", value=highlighted_text, height=400, disabled=True)
     
-    with tab2:
-        st.subheader("🔍 问题详情")
-        
-        # 显示问题统计概览
-        render_issues(issues)
-        
-        # 风险等级筛选
-        st.subheader("🔍 问题筛选")
-        risk_levels = ["全部", "重大风险", "一般风险", "低风险"]
-        selected_level = st.radio("风险等级", risk_levels, horizontal=True, 
-                                index=risk_levels.index(st.session_state.selected_risk_level))
-        st.session_state.selected_risk_level = selected_level
-        
-        # 显示筛选后的问题列表
-        filtered_issues = filter_issues_by_risk(issues, selected_level)
-        
-        if filtered_issues:
-            st.write(f"**筛选结果: 找到 {len(filtered_issues)} 个问题**")
-            for i, issue in enumerate(filtered_issues):
-                risk_level = issue.get("风险等级", "低")
-                risk_color = {"高": "🔴", "中": "🟡", "低": "🟢"}.get(risk_level, "⚪")
-                
-                with st.expander(f"{risk_color} {issue.get('类型', '未知类型')} - {risk_level}风险", expanded=False):
-                    st.write(f"**条款:** {issue.get('条款', 'N/A')}")
-                    st.write(f"**问题描述:** {issue.get('问题描述', 'N/A')}")
-                    
-                    if issue.get("法律依据"):
-                        st.write(f"**法律依据:** {issue['法律依据']}")
-                    if issue.get("影响分析"):
-                        st.write(f"**影响分析:** {issue['影响分析']}")
-                    if issue.get("商业优化"):
-                        st.write(f"**商业优化:** {issue['商业优化']}")
-                    
-                    st.write(f"**修改建议:** {issue.get('修改建议', 'N/A')}")
-        else:
-            st.info("未发现问题")
-    
-    with tab3:
-        st.subheader("📊 分析报告")
-        
-        # 显示整合分析结果
-        analysis = result.get("analysis")
-        if analysis:
-            render_analysis(analysis)
-        else:
-            st.warning("未生成整合分析报告")
-        
-        # 下载按钮
-        st.divider()
-        json_bytes = json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8")
-        st.download_button(
-            label="📥 下载完整结果",
-            data=json_bytes,
-            file_name=f"contract_analysis_{int(time.time())}.json",
-            mime="application/json",
-            use_container_width=True,
-        )
-        
-        # 生成高亮文件
-        if st.button("🎨 生成高亮文档", use_container_width=True):
-            with st.spinner("正在生成高亮文件..."):
-                highlight = call_highlight(result["file_path"], result.get("issues", []))
-            if not highlight or (isinstance(highlight, dict) and highlight.get("error")):
-                st.error("高亮生成失败")
-            else:
-                file_type = highlight.get("file_type", "pdf")
-                file_name = highlight.get("file_name", f"highlighted_contract.{file_type}")
-                content_b64 = highlight.get("content", "")
-                mime = "application/pdf" if file_type == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                if content_b64:
-                    b64_to_download(content_b64, file_name, mime)
-                    st.success("高亮文档生成成功！")
-    
-    with tab4:
-        st.subheader("📋 专家评审详情")
-        
-        # 显示专家评审结果
-        expert_responses = result.get("expert_responses", {})
-        render_expert_responses(expert_responses)
+    with col2:
+        # 右侧：风险分析区域
+        st.markdown("### 🔍 审查结果")
         
         # 调试信息
-        with st.expander("🔧 调试信息", expanded=False):
-            st.write("**原始分析结果:**")
-            st.json(result.get("analysis", {}))
+        st.write(f"总问题数: {len(issues)}")
+        if issues:
+            st.write(f"第一个问题: {issues[0]}")
+        
+        # 风险等级筛选按钮
+        st.markdown("**风险等级**")
+        risk_levels = ["全部", "一般风险", "重大风险"]
+        selected_level = st.radio("选择风险等级", risk_levels, horizontal=True, 
+                                index=risk_levels.index(st.session_state.selected_risk_level),
+                                key="risk_filter")
+        st.session_state.selected_risk_level = selected_level
+        
+        # 筛选问题
+        filtered_issues = filter_issues_by_risk(issues, selected_level)
+        st.write(f"筛选后问题数: {len(filtered_issues)}")
+        
+        # 显示风险项目
+        if filtered_issues:
+            st.markdown("---")
             
-            st.write("**专家响应详情:**")
-            st.json(expert_responses)
-            
-            st.write("**问题列表:**")
-            st.json(result.get("issues", []))
+            # 显示风险卡片
+            for i, issue in enumerate(filtered_issues, 1):
+                risk_level = issue.get("风险等级", "低")
+                issue_type = issue.get("类型", "未知类型")
+                
+                # 根据风险等级设置颜色和图标
+                if risk_level == "高":
+                    risk_color = "🔴"
+                    risk_label = "重大风险"
+                elif risk_level == "中":
+                    risk_color = "🟡"
+                    risk_label = "一般风险"
+                else:
+                    risk_color = "🟢"
+                    risk_label = "低风险"
+                
+                # 使用 Streamlit 容器和列来创建简洁的卡片
+                with st.container():
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
+                        st.markdown(f"**{risk_color} {issue_type}**")
+                    with col2:
+                        st.markdown(f"**{risk_label}**")
+                    
+                    # 使用 expander 来组织信息
+                    with st.expander("详细信息", expanded=True):
+                        st.write(f"**条款位置：** {issue.get('条款', 'N/A')}")
+                        st.write(f"**问题描述：** {issue.get('问题描述', 'N/A')}")
+                        st.write(f"**修改建议：** {issue.get('修改建议', 'N/A')}")
+                        
+                        # 添加可选字段
+                        if issue.get("法律依据"):
+                            st.write(f"**法律依据：** {issue.get('法律依据', 'N/A')}")
+                        if issue.get("影响分析"):
+                            st.write(f"**影响分析：** {issue.get('影响分析', 'N/A')}")
+                        if issue.get("商业优化"):
+                            st.write(f"**商业优化：** {issue.get('商业优化', 'N/A')}")
+                    
+                    st.markdown("---")
+        else:
+            st.info("未发现问题")
+        
+        # 下载结果按钮
+        st.markdown("---")
+        if st.button("📥 下载结果", use_container_width=True, type="primary"):
+            json_bytes = json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8")
+            st.download_button(
+                label="📥 下载完整结果",
+                data=json_bytes,
+                file_name=f"contract_analysis_{int(time.time())}.json",
+                mime="application/json",
+                use_container_width=True,
+            )
 
 else:
     # 未分析时的界面
