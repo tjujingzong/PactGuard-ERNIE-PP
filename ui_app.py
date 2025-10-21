@@ -310,7 +310,36 @@ def render_expert_responses(expert_responses: Dict):
         'format': '格式专家'
     }
 
-    st.subheader("专家评审详情")
+    st.subheader("📋 专家评审详情")
+    
+    # 统计各专家发现的问题数量
+    expert_stats = {}
+    for expert_type, response in expert_responses.items():
+        expert_name = expert_names.get(expert_type, '未知专家')
+        try:
+            if isinstance(response, dict) and "artifacts" in response:
+                response_text = response["artifacts"][0]["parts"][0]["text"]
+                parsed_response = json.loads(response_text)
+            elif isinstance(response, str):
+                parsed_response = json.loads(response)
+            else:
+                parsed_response = response
+            
+            if isinstance(parsed_response, list):
+                expert_stats[expert_name] = len(parsed_response)
+            else:
+                expert_stats[expert_name] = 0
+        except:
+            expert_stats[expert_name] = 0
+    
+    # 显示统计信息
+    if expert_stats:
+        st.write("**专家评审统计:**")
+        col1, col2, col3 = st.columns(3)
+        experts = list(expert_stats.keys())
+        for i, (expert_name, count) in enumerate(expert_stats.items()):
+            with [col1, col2, col3][i % 3]:
+                st.metric(f"🔍 {expert_name}", f"{count} 个问题")
     
     for expert_type, response in expert_responses.items():
         expert_name = expert_names.get(expert_type, '未知专家')
@@ -338,6 +367,8 @@ def render_expert_responses(expert_responses: Dict):
                     st.info("该专家未发现问题")
                     continue
                 
+                st.write(f"**共发现 {len(parsed_response)} 个问题:**")
+                
                 for i, issue in enumerate(parsed_response, 1):
                     if not isinstance(issue, dict):
                         continue
@@ -362,6 +393,8 @@ def render_expert_responses(expert_responses: Dict):
                     
             except Exception as e:
                 st.error(f"解析{expert_name}评审结果失败: {str(e)}")
+                st.write("**原始响应:**")
+                st.json(response)
 
 
 def render_issues(issues: List[Dict]):
@@ -387,7 +420,7 @@ def render_issues(issues: List[Dict]):
                 break
 
     # 风险等级统计
-    st.subheader("风险等级分布")
+    st.subheader("📊 风险等级分布")
     c1, c2, c3 = st.columns(3)
     with c1:
         st.metric("🔴 高风险", len(risk_levels["高"]))
@@ -397,22 +430,31 @@ def render_issues(issues: List[Dict]):
         st.metric("🟢 低风险", len(risk_levels["低"]))
 
     # 问题类型统计
-    st.subheader("问题类型分布")
+    st.subheader("📋 问题类型分布")
     type_stats = {k: len(v) for k, v in issue_types.items() if v}
     if type_stats:
-        st.write(type_stats)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("⚖️ 法律风险", type_stats.get("法律风险", 0))
+        with col2:
+            st.metric("💼 商业风险", type_stats.get("商业风险", 0))
+        with col3:
+            st.metric("📝 格式问题", type_stats.get("格式问题", 0))
     else:
         st.info("无分类问题")
 
     # 详细问题列表 - 按风险等级展示
-    st.subheader("问题详情")
+    st.subheader("🔍 问题详情")
     for level in ["高", "中", "低"]:
         if risk_levels[level]:
             level_color = {"高": "🔴", "中": "🟡", "低": "🟢"}[level]
-            st.write(f"**{level_color} {level}风险问题:**")
+            st.write(f"**{level_color} {level}风险问题 ({len(risk_levels[level])}个):**")
             
             for i, issue in enumerate(risk_levels[level], 1):
-                with st.expander(f"{i}. {issue.get('类型', '未知类型')} | 风险: {issue.get('风险等级', 'N/A')}"):
+                issue_type = issue.get('类型', '未知类型')
+                risk_level = issue.get('风险等级', 'N/A')
+                
+                with st.expander(f"{i}. {issue_type} | 风险: {risk_level}", expanded=False):
                     st.write(f"**条款:** {issue.get('条款', 'N/A')}")
                     st.write(f"**问题描述:** {issue.get('问题描述', 'N/A')}")
                     
@@ -604,7 +646,7 @@ def render_analysis(analysis: Optional[Dict]):
     # 显示风险评分和等级
     if "summary" in analysis:
         summary = analysis["summary"]
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
             risk_score = summary.get("risk_score", "N/A")
             st.metric("风险评分", f"{risk_score}/100" if isinstance(risk_score, (int, float)) else risk_score)
@@ -614,17 +656,20 @@ def render_analysis(analysis: Optional[Dict]):
             st.metric("风险等级", f"{level_color} {risk_level}")
         with c3:
             st.metric("总问题数", summary.get("total_issues", "N/A"))
+        with c4:
+            st.metric("违法条款数", summary.get("illegal_clauses", "N/A"))
         
         # 详细统计
         st.write("**详细统计:**")
         col1, col2 = st.columns(2)
         with col1:
-            st.write(f"• 高风险不利条款: {summary.get('unfavorable_high', 'N/A')}")
-            st.write(f"• 中风险不利条款: {summary.get('unfavorable_medium', 'N/A')}")
-            st.write(f"• 低风险不利条款: {summary.get('unfavorable_low', 'N/A')}")
+            st.write(f"• 高风险问题: {summary.get('high_risk', 'N/A')}")
+            st.write(f"• 中风险问题: {summary.get('medium_risk', 'N/A')}")
+            st.write(f"• 低风险问题: {summary.get('low_risk', 'N/A')}")
         with col2:
-            st.write(f"• 有利条款数: {summary.get('favorable_clauses', 'N/A')}")
-            st.write(f"• 违法条款数: {summary.get('illegal_clauses', 'N/A')}")
+            st.write(f"• 法律风险: {summary.get('legal_risks', 'N/A')}")
+            st.write(f"• 商业风险: {summary.get('business_risks', 'N/A')}")
+            st.write(f"• 格式问题: {summary.get('format_issues', 'N/A')}")
     else:
         # 兼容旧格式
         risk_score = analysis.get("risk_score", "N/A")
@@ -787,10 +832,10 @@ if has_file and st.button("🚀 开始分析", type="primary", use_container_wid
 if st.session_state.analysis_result:
     result = st.session_state.analysis_result
     
-    # 左右分栏布局
-    col_left, col_right = st.columns([1, 1])
+    # 创建选项卡布局
+    tab1, tab2, tab3, tab4 = st.tabs(["📄 合同内容", "🔍 问题详情", "📊 分析报告", "📋 专家评审"])
     
-    with col_left:
+    with tab1:
         st.subheader(f"📄 {st.session_state.file_name}")
         
         # 显示合同内容（带高亮）
@@ -803,19 +848,24 @@ if st.session_state.analysis_result:
         # 显示高亮后的文本
         st.markdown(highlighted_text, unsafe_allow_html=True)
     
-    with col_right:
-        st.subheader("🔍 审查结果")
+    with tab2:
+        st.subheader("🔍 问题详情")
+        
+        # 显示问题统计概览
+        render_issues(issues)
         
         # 风险等级筛选
+        st.subheader("🔍 问题筛选")
         risk_levels = ["全部", "重大风险", "一般风险", "低风险"]
         selected_level = st.radio("风险等级", risk_levels, horizontal=True, 
                                 index=risk_levels.index(st.session_state.selected_risk_level))
         st.session_state.selected_risk_level = selected_level
         
-        # 显示问题列表
+        # 显示筛选后的问题列表
         filtered_issues = filter_issues_by_risk(issues, selected_level)
         
         if filtered_issues:
+            st.write(f"**筛选结果: 找到 {len(filtered_issues)} 个问题**")
             for i, issue in enumerate(filtered_issues):
                 risk_level = issue.get("风险等级", "低")
                 risk_color = {"高": "🔴", "中": "🟡", "低": "🟢"}.get(risk_level, "⚪")
@@ -834,12 +884,22 @@ if st.session_state.analysis_result:
                     st.write(f"**修改建议:** {issue.get('修改建议', 'N/A')}")
         else:
             st.info("未发现问题")
+    
+    with tab3:
+        st.subheader("📊 分析报告")
+        
+        # 显示整合分析结果
+        analysis = result.get("analysis")
+        if analysis:
+            render_analysis(analysis)
+        else:
+            st.warning("未生成整合分析报告")
         
         # 下载按钮
         st.divider()
         json_bytes = json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8")
         st.download_button(
-            label="📥 下载结果",
+            label="📥 下载完整结果",
             data=json_bytes,
             file_name=f"contract_analysis_{int(time.time())}.json",
             mime="application/json",
@@ -860,6 +920,24 @@ if st.session_state.analysis_result:
                 if content_b64:
                     b64_to_download(content_b64, file_name, mime)
                     st.success("高亮文档生成成功！")
+    
+    with tab4:
+        st.subheader("📋 专家评审详情")
+        
+        # 显示专家评审结果
+        expert_responses = result.get("expert_responses", {})
+        render_expert_responses(expert_responses)
+        
+        # 调试信息
+        with st.expander("🔧 调试信息", expanded=False):
+            st.write("**原始分析结果:**")
+            st.json(result.get("analysis", {}))
+            
+            st.write("**专家响应详情:**")
+            st.json(expert_responses)
+            
+            st.write("**问题列表:**")
+            st.json(result.get("issues", []))
 
 else:
     # 未分析时的界面

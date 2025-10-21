@@ -138,7 +138,7 @@ class BaseAgent(A2AServer):
             
             content = chat_completion.choices[0].message.content.strip()
             print(content)
-            logger.info(f"大模型返回原始内容: {content[:200]}...")  # 记录部分返回内容
+            logger.info(f"[{self.__class__.__name__}] 大模型返回原始内容: {content[:200]}...")  # 记录部分返回内容
             
             def extract_json(text):
                 """智能JSON提取与解析"""
@@ -1066,7 +1066,7 @@ def _llm_sanity_check():
     try:
         resp = llm_client.chat.completions.create(
             messages=[{'role':'user','content':'请返回成功这个词语，不用解释返回就行'}],
-            model='default',
+            model='ernie-4.5-turbo-128k',
             temperature=0.7,
             response_format={"type": "json_object"},
         )
