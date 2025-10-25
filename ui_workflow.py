@@ -24,8 +24,41 @@ st.markdown(
 <style>
     /* 主容器样式 */
     .main-container {
-        padding: 20px;
+        padding: 1px 2px;
         background-color: #f8f9fa;
+    }
+    
+    /* 减少页面顶部空白 */
+    .main .block-container {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+    }
+    
+    /* 减少标题间距和调整大小 */
+    h1, h2, h3 {
+        margin-top: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    /* 调整主标题大小 */
+    h1 {
+        font-size: 1.8rem !important;
+        font-weight: 600 !important;
+    }
+    
+    /* 隐藏或调小右上角的rerun按钮 */
+    .stApp > header {
+        visibility: hidden;
+    }
+    
+    /* 隐藏Streamlit的菜单按钮 */
+    .stApp > div[data-testid="stToolbar"] {
+        visibility: hidden;
+    }
+    
+    /* 隐藏右上角的菜单 */
+    .stApp > div[data-testid="stHeader"] {
+        visibility: hidden;
     }
     
     /* 工作流步骤样式 */
@@ -96,25 +129,6 @@ st.markdown(
         font-weight: bold;
     }
     
-    /* 进度条样式 */
-    .progress-container {
-        background-color: #e9ecef;
-        border-radius: 10px;
-        padding: 3px;
-        margin: 10px 0;
-    }
-    
-    .progress-bar {
-        background-color: #007bff;
-        height: 20px;
-        border-radius: 8px;
-        transition: width 0.3s ease;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-weight: bold;
-    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -125,8 +139,6 @@ def initialize_session_state():
     """初始化session state"""
     if "workflow_result" not in st.session_state:
         st.session_state.workflow_result = None
-    if "current_step" not in st.session_state:
-        st.session_state.current_step = 0
     if "processing_status" not in st.session_state:
         st.session_state.processing_status = (
             "idle"  # idle, processing, completed, error
@@ -219,29 +231,6 @@ def preview_file_content(file_path: str) -> str:
         return f"预览文件失败: {str(e)}"
 
 
-def render_workflow_progress():
-    """渲染工作流进度"""
-    steps = [
-        {"name": "文档解析", "icon": "📄", "description": "解析合同文档获取文本内容"},
-        {"name": "风险分析", "icon": "🔍", "description": "分析法律、商业、格式风险"},
-        {"name": "建议生成", "icon": "💡", "description": "生成综合分析和修改建议"},
-        {"name": "结果展示", "icon": "📊", "description": "展示分析结果和风险评估"},
-    ]
-
-    st.markdown("### 🔄 工作流进度")
-
-    # 进度条
-    progress = st.session_state.current_step / len(steps)
-    st.markdown(
-        f"""
-    <div class="progress-container">
-        <div class="progress-bar" style="width: {progress * 100}%">
-            {int(progress * 100)}%
-        </div>
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
 
 
 def add_highlights_to_text(text: str, issues: List[Dict]) -> str:
@@ -434,13 +423,11 @@ def process_contract_workflow(file_path: str):
     """处理合同工作流"""
     try:
         st.session_state.processing_status = "processing"
-        st.session_state.current_step = 0
 
         # 创建工作流实例
         workflow = ContractWorkflow()
 
         # 步骤1: 文档解析
-        st.session_state.current_step = 1
         with st.spinner("正在解析文档..."):
             result = workflow.process_contract(file_path)
 
@@ -451,7 +438,6 @@ def process_contract_workflow(file_path: str):
 
         st.session_state.workflow_result = result
         st.session_state.processing_status = "completed"
-        st.session_state.current_step = 4
 
         st.success("合同分析完成！")
 
@@ -465,10 +451,8 @@ def main():
     initialize_session_state()
 
     # 页面标题
-    st.title("📄 合同审查系统 - 工作流版")
-    st.markdown(
-        "基于工作流的智能合同审查系统，依次执行：文档解析 → 风险分析 → 建议生成 → 结果展示"
-    )
+    st.title("📄 合同审查系统")
+
 
     # 侧边栏 - 文件上传
     with st.sidebar:
@@ -515,8 +499,6 @@ def main():
         hasattr(st.session_state, "saved_file_path")
         and st.session_state.saved_file_path
     ):
-        # 显示工作流进度
-        render_workflow_progress()
 
         # 文件信息
         st.markdown("### 📄 当前文件")
@@ -531,7 +513,6 @@ def main():
                     "file_name",
                     "preview_content",
                     "workflow_result",
-                    "current_step",
                     "processing_status",
                 ]:
                     if key in st.session_state:
@@ -576,7 +557,6 @@ def main():
                             "file_name",
                             "preview_content",
                             "workflow_result",
-                            "current_step",
                             "processing_status",
                         ]:
                             if key in st.session_state:
@@ -591,7 +571,7 @@ def main():
 
                     # 显示标记后的文本
                     st.markdown("### 📄 合同内容（已标记问题）")
-                    st.text_area("", value=highlighted_text, height=400, disabled=True)
+                    st.text_area("", value=highlighted_text, height=800, disabled=True)
                 else:
                     st.warning("未获取到文档内容")
 
@@ -737,7 +717,7 @@ def main():
                 st.text_area(
                     "文件内容",
                     st.session_state.preview_content,
-                    height=300,
+                    height=800,
                     disabled=True,
                 )
 
