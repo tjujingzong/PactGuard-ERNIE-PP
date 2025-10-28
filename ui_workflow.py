@@ -674,19 +674,18 @@ def main():
                         # 直接复用现有渲染函数
                         render_suggestions(suggestions)
 
-                # 下载结果按钮
+                # 下载结果按钮（直接下载）
                 st.markdown("---")
-                if st.button("📥 下载结果", use_container_width=True, type="primary"):
-                    json_bytes = json.dumps(
-                        result, ensure_ascii=False, indent=2
-                    ).encode("utf-8")
-                    st.download_button(
-                        label="📥 下载完整结果",
-                        data=json_bytes,
-                        file_name=f"contract_analysis_{int(time.time())}.json",
-                        mime="application/json",
-                        use_container_width=True,
-                    )
+                json_bytes = json.dumps(
+                    result, ensure_ascii=False, indent=2
+                ).encode("utf-8")
+                st.download_button(
+                    label="📥 下载结果",
+                    data=json_bytes,
+                    file_name=f"contract_analysis_{int(time.time())}.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
 
         # 显示文件预览
         if (

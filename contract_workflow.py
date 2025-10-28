@@ -330,7 +330,7 @@ class ContractWorkflow:
         if max_possible_score > 0:
             base_score = (total_score / max_possible_score) * 100
             # 适度提高评分：放大系数1.25，最高不超过100
-            adjusted_score = min(base_score * 1.8, 100.0)
+            adjusted_score = min(base_score * 1.5, 100.0)
             return round(adjusted_score, 2)
         return 0.0
 
