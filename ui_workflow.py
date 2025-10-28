@@ -579,120 +579,100 @@ def main():
                 # 右侧：风险分析区域
                 st.markdown("### 🔍 审查结果")
 
-                # 风险等级筛选按钮
-                st.markdown("**风险等级**")
-                risk_levels = ["全部", "重大风险", "一般风险", "低风险"]
-                selected_level = st.radio(
-                    "选择风险等级", risk_levels, horizontal=True, key="risk_filter"
+                # 视图切换：风险点 / 综合建议
+                view = st.radio(
+                    "选择查看内容",
+                    ["风险点", "综合建议"],
+                    horizontal=True,
+                    key="result_view_switch",
                 )
 
-                # 筛选问题
-                filtered_issues = filter_issues_by_risk(all_issues, selected_level)
-
-                # 显示风险统计
-                statistics = risk_analysis.get("statistics", {})
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("总问题数", len(filtered_issues))
-                with col2:
-                    risk_score = statistics.get("risk_score", 0)
-                    st.metric("风险评分", f"{risk_score}/100")
-                with col3:
-                    risk_level = statistics.get("risk_level", "低")
-                    level_color = {"高": "🔴", "中": "🟡", "低": "🟢"}.get(
-                        risk_level, "⚪"
-                    )
-                    st.metric("风险等级", f"{level_color} {risk_level}")
-
-                # 显示风险项目
-                if filtered_issues:
-                    st.markdown("---")
-
-                    # 显示风险卡片
-                    for i, issue in enumerate(filtered_issues, 1):
-                        risk_level = issue.get("风险等级", "低")
-                        issue_type = issue.get("类型", "未知类型")
-
-                        # 根据风险等级设置颜色和图标
-                        if risk_level == "高":
-                            risk_color = "🔴"
-                            risk_label = "重大风险"
-                        elif risk_level == "中":
-                            risk_color = "🟡"
-                            risk_label = "一般风险"
-                        else:
-                            risk_color = "🟢"
-                            risk_label = "低风险"
-
-                        # 使用 Streamlit 容器和列来创建简洁的卡片
-                        with st.container():
-                            col1, col2 = st.columns([3, 1])
-
-                            with col1:
-                                st.markdown(f"**{risk_color} {issue_type}**")
-                            with col2:
-                                st.markdown(f"**{risk_label}**")
-
-                            # 使用 expander 来组织信息
-                            with st.expander("详细信息", expanded=True):
-                                st.write(f"**条款位置：** {issue.get('条款', 'N/A')}")
-                                st.write(
-                                    f"**问题描述：** {issue.get('问题描述', 'N/A')}"
-                                )
-                                st.write(
-                                    f"**修改建议：** {issue.get('修改建议', 'N/A')}"
-                                )
-
-                                # 添加可选字段
-                                if issue.get("法律依据"):
-                                    st.write(
-                                        f"**法律依据：** {issue.get('法律依据', 'N/A')}"
-                                    )
-                                if issue.get("影响分析"):
-                                    st.write(
-                                        f"**影响分析：** {issue.get('影响分析', 'N/A')}"
-                                    )
-                                if issue.get("商业优化"):
-                                    st.write(
-                                        f"**商业优化：** {issue.get('商业优化', 'N/A')}"
-                                    )
-
-                            st.markdown("---")
-                else:
-                    st.info("未发现问题")
-
-                # 综合建议区域
                 suggestions = result.get("suggestions", {})
-                if suggestions:
-                    st.markdown("---")
-                    st.markdown("### 💡 综合建议")
+                statistics = risk_analysis.get("statistics", {})
 
-                    # 签约建议
-                    recommendation = suggestions.get("recommendation", {})
-                    if recommendation.get("signing_advice"):
-                        st.markdown("#### 📝 签约建议")
-                        signing_advice = recommendation["signing_advice"]
-                        if "不建议" in signing_advice or "❌" in signing_advice:
-                            st.error(f"**{signing_advice}**")
-                        elif "谨慎" in signing_advice or "⚠️" in signing_advice:
-                            st.warning(f"**{signing_advice}**")
-                        elif "可以" in signing_advice or "✅" in signing_advice:
-                            st.success(f"**{signing_advice}**")
-                        else:
-                            st.info(f"**{signing_advice}**")
+                if view == "风险点":
+                    # 风险等级筛选
+                    st.markdown("**风险等级**")
+                    risk_levels = ["全部", "重大风险", "一般风险", "低风险"]
+                    selected_level = st.radio(
+                        "选择风险等级", risk_levels, horizontal=True, key="risk_filter"
+                    )
 
-                    # 主要风险点
-                    analysis = suggestions.get("analysis", {})
-                    if analysis.get("key_risks"):
-                        st.markdown("#### 🔴 主要风险点")
-                        for risk in analysis["key_risks"]:
-                            st.write(f"• {risk}")
+                    # 筛选问题
+                    filtered_issues = filter_issues_by_risk(all_issues, selected_level)
 
-                    # 优化建议
-                    if analysis.get("optimization_suggestions"):
-                        st.markdown("#### 🛠️ 优化建议")
-                        for suggestion in analysis["optimization_suggestions"]:
-                            st.write(f"• {suggestion}")
+                    # 风险统计
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("总问题数", len(filtered_issues))
+                    with col2:
+                        risk_score = statistics.get("risk_score", 0)
+                        st.metric("风险评分", f"{risk_score}/100")
+                    with col3:
+                        risk_level = statistics.get("risk_level", "低")
+                        level_color = {"高": "🔴", "中": "🟡", "低": "🟢"}.get(
+                            risk_level, "⚪"
+                        )
+                        st.metric("风险等级", f"{level_color} {risk_level}")
+
+                    # 风险项目列表
+                    if filtered_issues:
+                        st.markdown("---")
+                        for i, issue in enumerate(filtered_issues, 1):
+                            risk_level = issue.get("风险等级", "低")
+                            issue_type = issue.get("类型", "未知类型")
+
+                            if risk_level == "高":
+                                risk_color = "🔴"
+                                risk_label = "重大风险"
+                            elif risk_level == "中":
+                                risk_color = "🟡"
+                                risk_label = "一般风险"
+                            else:
+                                risk_color = "🟢"
+                                risk_label = "低风险"
+
+                            with st.container():
+                                col1, col2 = st.columns([3, 1])
+
+                                with col1:
+                                    st.markdown(f"**{risk_color} {issue_type}**")
+                                with col2:
+                                    st.markdown(f"**{risk_label}**")
+
+                                with st.expander("详细信息", expanded=True):
+                                    st.write(f"**条款位置：** {issue.get('条款', 'N/A')}")
+                                    st.write(f"**问题描述：** {issue.get('问题描述', 'N/A')}")
+                                    st.write(f"**修改建议：** {issue.get('修改建议', 'N/A')}")
+                                    if issue.get("法律依据"):
+                                        st.write(f"**法律依据：** {issue.get('法律依据', 'N/A')}")
+                                    if issue.get("影响分析"):
+                                        st.write(f"**影响分析：** {issue.get('影响分析', 'N/A')}")
+                                    if issue.get("商业优化"):
+                                        st.write(f"**商业优化：** {issue.get('商业优化', 'N/A')}")
+
+                                st.markdown("---")
+                    else:
+                        st.info("未发现问题")
+                else:
+                    # 综合建议视图
+                    if not suggestions:
+                        st.info("暂无综合建议")
+                    else:
+                        # 显示核心摘要与建议
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("风险评分", f"{statistics.get('risk_score', 0)}/100")
+                        with col2:
+                            st.metric("总问题数", statistics.get("total_issues", len(all_issues)))
+                        with col3:
+                            risk_level = statistics.get("risk_level", "低")
+                            level_color = {"高": "🔴", "中": "🟡", "低": "🟢"}.get(risk_level, "⚪")
+                            st.metric("风险等级", f"{level_color} {risk_level}")
+
+                        st.markdown("---")
+                        # 直接复用现有渲染函数
+                        render_suggestions(suggestions)
 
                 # 下载结果按钮
                 st.markdown("---")
