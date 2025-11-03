@@ -147,6 +147,75 @@ def initialize_session_state():
         st.session_state.file_name = None
     if "preview_content" not in st.session_state:
         st.session_state.preview_content = None
+    if "loaded_from_history" not in st.session_state:
+        st.session_state.loaded_from_history = False
+
+
+def load_latest_result_by_filename(file_name: str) -> Optional[Dict[str, Any]]:
+    """根据文件名加载该文件的最新分析结果。
+
+    优先匹配 result["original_file_name"] == file_name；
+    兼容旧结果：若无 original_file_name，则用 basename(result["file_path"]) 比对。
+    """
+    results_dir = "contract_analysis_results"
+    if not os.path.exists(results_dir):
+        return None
+
+    candidates: List[Dict[str, Any]] = []
+    for fname in os.listdir(results_dir):
+        if not fname.lower().endswith(".json"):
+            continue
+        fpath = os.path.join(results_dir, fname)
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # 匹配逻辑
+            match = False
+            ori = data.get("original_file_name")
+            if ori and ori == file_name:
+                match = True
+            else:
+                # 兼容旧数据
+                fp = data.get("file_path")
+                if isinstance(fp, str) and os.path.basename(fp) == file_name:
+                    match = True
+            if match:
+                # 以 processing_time 为主，退化到文件名时间戳排序
+                ts = data.get("processing_time")
+                candidates.append({
+                    "_ts": float(ts) if isinstance(ts, (int, float)) else 0.0,
+                    "_path": fpath,
+                    "data": data,
+                })
+        except Exception:
+            continue
+
+    if not candidates:
+        return None
+
+    # 若 processing_time 都为 0，则使用文件名中的时间戳进行排序作为兜底
+    def extract_name_ts(p: str) -> float:
+        base = os.path.basename(p)
+        # 形如 contract_analysis_YYYYmmdd_HHMMSS.json
+        try:
+            stem = os.path.splitext(base)[0]
+            parts = stem.split("_")
+            if len(parts) >= 3:
+                dt = parts[-2] + parts[-1]  # YYYYmmdd + HHMMSS
+                # 转换为结构化时间
+                import datetime
+                d = datetime.datetime.strptime(dt, "%Y%m%d%H%M%S")
+                return d.timestamp()
+        except Exception:
+            pass
+        return 0.0
+
+    for c in candidates:
+        if not c["_ts"]:
+            c["_ts"] = extract_name_ts(c["_path"]) or 0.0
+
+    candidates.sort(key=lambda x: x["_ts"], reverse=True)
+    return candidates[0]["data"]
 
 
 def save_uploaded_file(uploaded_file) -> Optional[str]:
@@ -427,9 +496,11 @@ def process_contract_workflow(file_path: str):
         # 创建工作流实例
         workflow = ContractWorkflow()
 
-        # 步骤1: 文档解析
-        with st.spinner("正在解析文档..."):
-            result = workflow.process_contract(file_path)
+        # 步骤1: 文档解析/分析
+        with st.spinner("正在解析文档并分析..."):
+            result = workflow.process_contract(
+                file_path, original_file_name=st.session_state.file_name
+            )
 
         if "error" in result:
             st.session_state.processing_status = "error"
@@ -471,6 +542,11 @@ def main():
             if uploaded_file:
                 saved_path = save_uploaded_file(uploaded_file)
                 if saved_path:
+                    # 切换文件时清空历史分析状态，回到预览态
+                    st.session_state.workflow_result = None
+                    st.session_state.processing_status = "idle"
+                    st.session_state.loaded_from_history = False
+
                     st.session_state.saved_file_path = saved_path
                     st.session_state.file_name = uploaded_file.name
                     st.session_state.preview_content = preview_file_content(saved_path)
@@ -484,6 +560,11 @@ def main():
                     if st.button(f"📄 {file_name}", key=f"sample_{i}"):
                         temp_path = copy_sample_file(sample_path)
                         if temp_path:
+                            # 切换样例时清空历史分析状态，回到预览态
+                            st.session_state.workflow_result = None
+                            st.session_state.processing_status = "idle"
+                            st.session_state.loaded_from_history = False
+
                             st.session_state.saved_file_path = temp_path
                             st.session_state.file_name = file_name
                             st.session_state.preview_content = preview_file_content(
@@ -506,22 +587,29 @@ def main():
         with col1:
             st.write(f"**文件名:** {st.session_state.file_name}")
         with col2:
-            if st.button("🔄 重新选择文件"):
-                # 清除状态
-                for key in [
-                    "saved_file_path",
-                    "file_name",
-                    "preview_content",
-                    "workflow_result",
-                    "processing_status",
-                ]:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                st.rerun()
+            # 顶部右侧不再受状态限制，按钮位置将下移到自动加载逻辑之后
+            pass
 
-        # 开始分析按钮
-        if st.session_state.processing_status == "idle":
-            if st.button("🚀 开始分析", type="primary", use_container_width=True):
+        # 若选择了文件，尝试自动加载历史最新分析结果
+        if (
+            st.session_state.processing_status == "idle"
+            and st.session_state.file_name
+            and not st.session_state.loaded_from_history
+        ):
+            cached = load_latest_result_by_filename(st.session_state.file_name)
+            if cached:
+                st.session_state.workflow_result = cached
+                st.session_state.processing_status = "completed"
+                st.session_state.loaded_from_history = True
+                st.success("已加载历史最新分析结果")
+
+        # 操作按钮：idle 显示“开始分析”；completed 显示“重新提交模型分析”
+        if st.session_state.processing_status in ("idle", "completed"):
+            if st.session_state.processing_status == "completed":
+                label = "🔁 重新提交模型分析"
+            else:
+                label = "🚀 开始分析"
+            if st.button(label, type="primary", use_container_width=True):
                 process_contract_workflow(st.session_state.saved_file_path)
                 st.rerun()
 
@@ -545,23 +633,8 @@ def main():
                 # 左侧：合同内容区域
                 st.markdown("### 📄 合同文档")
 
-                # 合同标题和上传按钮
-                header_col1, header_col2 = st.columns([3, 1])
-                with header_col1:
-                    st.markdown(f"**{st.session_state.file_name}**")
-                with header_col2:
-                    if st.button("📤 重新选择", key="upload_contract"):
-                        # 清除状态
-                        for key in [
-                            "saved_file_path",
-                            "file_name",
-                            "preview_content",
-                            "workflow_result",
-                            "processing_status",
-                        ]:
-                            if key in st.session_state:
-                                del st.session_state[key]
-                        st.rerun()
+                # 合同标题（移除重复按钮，仅展示文件名）
+                st.markdown(f"**{st.session_state.file_name}**")
 
                 # 显示合同内容（带高亮）
                 document_text = result.get("document_text", "")

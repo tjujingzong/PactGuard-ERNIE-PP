@@ -26,7 +26,7 @@ class ContractWorkflow:
             base_url="https://qianfan.baidubce.com/v2",
         )
 
-    def process_contract(self, file_path: str) -> Dict[str, Any]:
+    def process_contract(self, file_path: str, original_file_name: Optional[str] = None) -> Dict[str, Any]:
         """
         主工作流：处理合同文件
         1. 解析文档
@@ -54,7 +54,7 @@ class ContractWorkflow:
             # 步骤4: 整合结果
             logger.info("步骤4: 整合结果...")
             result = self._integrate_results(
-                file_path, document_text, risk_analysis, suggestions
+                file_path, document_text, risk_analysis, suggestions, original_file_name
             )
 
             # 保存结果
@@ -447,12 +447,14 @@ class ContractWorkflow:
         document_text: str,
         risk_analysis: Dict[str, Any],
         suggestions: Dict[str, Any],
+        original_file_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """步骤4: 整合所有结果"""
         logger.info("整合分析结果...")
 
         return {
             "file_path": file_path,
+            "original_file_name": original_file_name if original_file_name else os.path.basename(file_path),
             "document_text": document_text,
             "risk_analysis": risk_analysis,
             "suggestions": suggestions,
