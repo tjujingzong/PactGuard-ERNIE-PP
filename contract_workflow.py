@@ -87,25 +87,37 @@ class ContractWorkflow:
                 logger.error(f"文档解析错误: {result['error']}")
                 return None
 
-            # 处理MCP服务返回的不同格式
-            content = result.get("content", "")
+            # 处理MCP服务返回的不同格式，统一归一化为纯文本
+            raw_content = result.get("content", "")
 
-            # 如果content是字典，尝试提取文本
-            if isinstance(content, dict):
-                # 尝试从字典中提取文本内容
-                if "content" in content:
-                    content = content["content"]
-                elif "text" in content:
-                    content = content["text"]
-                elif "message" in content:
-                    content = content["message"]
+            def extract_text_from_item(item: Any) -> str:
+                """从可能的元素中提取文本。
+                - dict: 优先取 text/content/message 字段
+                - 其他: 转成字符串
+                """
+                if isinstance(item, dict):
+                    for key in ("text", "content", "message"):
+                        if key in item and isinstance(item[key], str):
+                            return item[key]
+                    # 常见 OpenAI/MCP 结构：{"type":"text","text":"..."}
+                    if item.get("type") == "text" and isinstance(item.get("text"), str):
+                        return item["text"]
+                    return str(item)
+                elif isinstance(item, (list, tuple)):
+                    return "\n".join(extract_text_from_item(x) for x in item)
+                elif isinstance(item, str):
+                    return item
                 else:
-                    # 如果字典中没有文本内容，尝试转换为字符串
-                    content = str(content)
+                    return str(item)
 
-            # 确保content是字符串
-            if not isinstance(content, str):
-                content = str(content)
+            # 将 raw_content 归一化为文本：
+            if isinstance(raw_content, list):
+                # 典型返回：[{"type":"text","text":"..."}, ...]
+                content = "\n".join(extract_text_from_item(x) for x in raw_content)
+            elif isinstance(raw_content, dict):
+                content = extract_text_from_item(raw_content)
+            else:
+                content = extract_text_from_item(raw_content)
 
             # 调试信息
             logger.info(f"MCP返回的content类型: {type(content)}")
