@@ -6,9 +6,13 @@ import json
 import time
 import tempfile
 import base64
+import logging
 from typing import Dict, List, Optional, Any
 import streamlit as st
 from contract_workflow import ContractWorkflow
+import requests
+import urllib
+import warnings
 
 # 页面配置
 st.set_page_config(
@@ -17,6 +21,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+warnings.filterwarnings("ignore")
+# 降低触发空 label 提示的模块日志级别（双保险）
+logging.getLogger("streamlit.elements.lib.policies").setLevel(logging.ERROR)
 
 # 自定义CSS样式
 st.markdown(
@@ -149,6 +156,9 @@ def initialize_session_state():
         st.session_state.preview_content = None
     if "loaded_from_history" not in st.session_state:
         st.session_state.loaded_from_history = False
+    if "ocr_parse_result" not in st.session_state:
+        # 用于右侧对照面板的在线解析结果缓存
+        st.session_state.ocr_parse_result = None
 
 
 def load_latest_result_by_filename(file_name: str) -> Optional[Dict[str, Any]]:
@@ -182,11 +192,13 @@ def load_latest_result_by_filename(file_name: str) -> Optional[Dict[str, Any]]:
             if match:
                 # 以 processing_time 为主，退化到文件名时间戳排序
                 ts = data.get("processing_time")
-                candidates.append({
-                    "_ts": float(ts) if isinstance(ts, (int, float)) else 0.0,
-                    "_path": fpath,
-                    "data": data,
-                })
+                candidates.append(
+                    {
+                        "_ts": float(ts) if isinstance(ts, (int, float)) else 0.0,
+                        "_path": fpath,
+                        "data": data,
+                    }
+                )
         except Exception:
             continue
 
@@ -204,6 +216,7 @@ def load_latest_result_by_filename(file_name: str) -> Optional[Dict[str, Any]]:
                 dt = parts[-2] + parts[-1]  # YYYYmmdd + HHMMSS
                 # 转换为结构化时间
                 import datetime
+
                 d = datetime.datetime.strptime(dt, "%Y%m%d%H%M%S")
                 return d.timestamp()
         except Exception:
@@ -300,6 +313,272 @@ def preview_file_content(file_path: str) -> str:
         return f"预览文件失败: {str(e)}"
 
 
+def _read_file_as_base64(file_path: str) -> Optional[str]:
+    """读取文件并返回base64（用于内嵌PDF预览）。"""
+    try:
+        with open(file_path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    except Exception:
+        return None
+
+
+def render_file_preview(file_path: str, height: int = 840):
+    """左侧源文件预览。
+
+    - PDF: 按页渲染为图片进行展示（基于 PyMuPDF）
+    - 其他: 以文本方式展示（前2K字符）
+    """
+    file_ext = os.path.splitext(file_path)[1].lower()
+    st.markdown("#### 源文件预览")
+
+    if file_ext == ".pdf":
+        try:
+            import fitz  # PyMuPDF
+
+            doc = fitz.open(file_path)
+            if doc.page_count == 0:
+                st.warning("PDF 无页面可预览")
+                return
+
+            # 当前页（仅展示单页）
+            page_key = f"pdf_page_{os.path.basename(file_path)}"
+            current_page = int(st.session_state.get(page_key, 1))
+            if current_page < 1:
+                current_page = 1
+            if current_page > doc.page_count:
+                current_page = doc.page_count
+
+            page = doc.load_page(current_page - 1)
+            pix = page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            st.image(
+                img_bytes,
+                caption=f"第{int(current_page)}页 / 共{doc.page_count}页",
+                width='stretch',
+            )
+
+            # 控件放在图片正下方：上一页/页码输入/下一页
+            ctrl_left, ctrl_mid, ctrl_right = st.columns([1, 2, 1])
+            with ctrl_left:
+                if st.button("上一页", width='stretch', key=f"prev_{page_key}"):
+                    new_page = max(1, current_page - 1)
+                    if new_page != current_page:
+                        st.session_state[page_key] = new_page
+                        st.rerun()
+            with ctrl_mid:
+                new_val = st.number_input(
+                    "页码",
+                    min_value=1,
+                    max_value=doc.page_count,
+                    value=current_page,
+                    step=1,
+                    key=f"num_{page_key}",
+                    label_visibility="collapsed",
+                )
+                if int(new_val) != current_page:
+                    st.session_state[page_key] = int(new_val)
+                    st.rerun()
+            with ctrl_right:
+                if st.button("下一页", width='stretch', key=f"next_{page_key}"):
+                    new_page = min(doc.page_count, current_page + 1)
+                    if new_page != current_page:
+                        st.session_state[page_key] = new_page
+                        st.rerun()
+        except Exception:
+            # 兜底：回退到文本模式
+            st.warning("图片预览失败，已切换为文本模式。")
+            st.text_area(
+                "文件内容",
+                preview_file_content(file_path),
+                height=height,
+                disabled=True,
+            )
+    else:
+        st.text_area(
+            "文件内容", preview_file_content(file_path), height=height, disabled=True
+        )
+
+
+def render_preview_panel(file_path: str, preview_text: str):
+    """两栏预览：左侧源文件，右侧识别结果对照（参考示例UI）。"""
+    left, right = st.columns([1, 1], gap="large")
+    with left:
+        render_file_preview(file_path)
+
+    with right:
+        st.markdown("#### 解析结果对照")
+        tabs = st.tabs(["OCR识别对照", "Markdown", "JSON"])
+
+        with tabs[0]:
+            # 在线API调用：百度文档解析（需要设置环境变量 BAIDU_PARSER_AUTH）
+            colA, colB = st.columns([1, 1])
+            with colA:
+                if st.button("▶ 调用OCR解析", key="btn_call_ocr"):
+                    st.session_state.ocr_parse_result = call_online_parse_api(file_path)
+                    st.rerun()
+            with colB:
+                if st.session_state.ocr_parse_result:
+                    st.success("已获取在线解析结果")
+
+            # 展示解析文本（若无在线结果，回退到本地预览文本）
+            ocr_text = None
+            if st.session_state.ocr_parse_result and isinstance(
+                st.session_state.ocr_parse_result, dict
+            ):
+                ocr_text = st.session_state.ocr_parse_result.get(
+                    "markdown_text"
+                ) or st.session_state.ocr_parse_result.get("raw_text")
+            st.text_area(
+                "识别文本",
+                ocr_text if ocr_text else preview_text,
+                height=780,
+                disabled=True,
+                label_visibility="collapsed",
+            )
+
+            # 若有在线解析的原始返回，提供调试输出
+            if st.session_state.ocr_parse_result and isinstance(
+                st.session_state.ocr_parse_result, dict
+            ):
+                with st.expander("API 调试输出", expanded=False):
+                    st.json(st.session_state.ocr_parse_result)
+
+        with tabs[1]:
+            # 将预览文本按markdown渲染（若非MD也可正常显示）
+            st.markdown(
+                preview_text if isinstance(preview_text, str) else str(preview_text)
+            )
+
+        with tabs[2]:
+            # 若有外部解析JSON，可在此处填充；当前给出提示占位
+            if (
+                hasattr(st.session_state, "workflow_result")
+                and st.session_state.workflow_result
+                and isinstance(st.session_state.workflow_result, dict)
+            ):
+                st.json(st.session_state.workflow_result)
+            elif st.session_state.ocr_parse_result and isinstance(
+                st.session_state.ocr_parse_result, dict
+            ):
+                st.json(st.session_state.ocr_parse_result.get("json_result", {}))
+            else:
+                st.info("暂无JSON结果。启动分析后将在此展示结构化数据。")
+
+
+def call_online_parse_api(file_path: str) -> Optional[Dict[str, Any]]:
+    """调用百度文档解析在线API，并返回解析文本/JSON/下载链接。"""
+    try:
+        create_url = "https://aip.baidubce.com/rest/2.0/brain/online/v2/parser/task"
+        query_url = (
+            "https://aip.baidubce.com/rest/2.0/brain/online/v2/parser/task/query"
+        )
+
+        params = {
+            "file_data": _read_file_as_base64(file_path) or "",
+            "file_name": os.path.basename(file_path),
+            "recognize_formula": "True",
+            "analysis_chart": "True",
+            "angle_adjust": "True",
+            "parse_image_layout": "True",
+            "language_type": "CHN_ENG",
+            "switch_digital_width": "auto",
+        }
+        payload = urllib.parse.urlencode(params)
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "Authorization": "Bearer bce-v3/ALTAK-IS6uG1qXcgDDP9RrmjYD9/ede55d516092e0ca5e9041eab19455df12c7db7f",
+        }
+
+        resp = requests.post(create_url, headers=headers, data=payload.encode("utf-8"))
+        data = (
+            resp.json()
+            if resp.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
+        task_id = (
+            (data.get("result", {}) or {}).get("task_id")
+            if isinstance(data, dict)
+            else None
+        )
+        if not task_id:
+            st.error("创建在线解析任务失败")
+            return None
+
+        # 轮询
+        max_retries = 30
+        interval = 2
+        result_json: Optional[Dict[str, Any]] = None
+        for _ in range(max_retries):
+            q = requests.post(
+                query_url,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                    "Authorization": "Bearer bce-v3/ALTAK-IS6uG1qXcgDDP9RrmjYD9/ede55d516092e0ca5e9041eab19455df12c7db7f",
+                },
+                data=f"task_id={task_id}".encode("utf-8"),
+            )
+            try:
+                result_json = q.json()
+            except Exception:
+                result_json = None
+            status = (result_json or {}).get("result", {}).get("status")
+            if status == "success":
+                break
+            if status in ("failed", "error"):
+                break
+            time.sleep(interval)
+
+        if not result_json:
+            st.error("在线解析任务无返回")
+            return None
+
+        r = result_json.get("result", {}) if isinstance(result_json, dict) else {}
+        parse_result_url = r.get("parse_result_url")
+        markdown_url = r.get("markdown_url")
+
+        json_result: Dict[str, Any] = {}
+        markdown_text: Optional[str] = None
+        try:
+            if parse_result_url:
+                jr = requests.get(parse_result_url, timeout=20)
+                json_result = jr.json() if jr.ok else {}
+        except Exception:
+            json_result = {}
+        try:
+            if markdown_url:
+                mr = requests.get(markdown_url, timeout=20)
+                markdown_text = mr.text if mr.ok else None
+        except Exception:
+            markdown_text = None
+
+        result_payload = {
+            "task_id": task_id,
+            "parse_result_url": parse_result_url,
+            "markdown_url": markdown_url,
+            "json_result": json_result,
+            "markdown_text": markdown_text,
+            # 回退的原始文本
+            "raw_text": preview_file_content(file_path),
+            # 额外暴露一次核心 API 返回，便于打印/调试
+            "_api_create_resp": data,
+            "_api_query_resp": result_json,
+        }
+
+        # 打印到控制台（开发期需求）
+        print(
+            "[call_online_parse_api] create_resp:", json.dumps(data, ensure_ascii=False)
+        )
+        print(
+            "[call_online_parse_api] query_resp:",
+            json.dumps(result_json or {}, ensure_ascii=False),
+        )
+
+        return result_payload
+    except Exception as e:
+        st.error(f"调用在线解析API失败: {e}")
+        return None
 
 
 def add_highlights_to_text(text: str, issues: List[Dict]) -> str:
@@ -524,7 +803,6 @@ def main():
     # 页面标题
     st.title("📄 合同审查系统")
 
-
     # 侧边栏 - 文件上传
     with st.sidebar:
         st.markdown("### 📁 文件选择")
@@ -609,7 +887,7 @@ def main():
                 label = "🔁 重新提交模型分析"
             else:
                 label = "🚀 开始分析"
-            if st.button(label, type="primary", use_container_width=True):
+            if st.button(label, type="primary", width='stretch'):
                 process_contract_workflow(st.session_state.saved_file_path)
                 st.rerun()
 
@@ -644,7 +922,13 @@ def main():
 
                     # 显示标记后的文本
                     st.markdown("### 📄 合同内容（已标记问题）")
-                    st.text_area("", value=highlighted_text, height=800, disabled=True)
+                    st.text_area(
+                        "合同内容（已标记）",
+                        value=highlighted_text,
+                        height=800,
+                        disabled=True,
+                        label_visibility="collapsed",
+                    )
                 else:
                     st.warning("未获取到文档内容")
 
@@ -714,15 +998,27 @@ def main():
                                     st.markdown(f"**{risk_label}**")
 
                                 with st.expander("详细信息", expanded=True):
-                                    st.write(f"**条款位置：** {issue.get('条款', 'N/A')}")
-                                    st.write(f"**问题描述：** {issue.get('问题描述', 'N/A')}")
-                                    st.write(f"**修改建议：** {issue.get('修改建议', 'N/A')}")
+                                    st.write(
+                                        f"**条款位置：** {issue.get('条款', 'N/A')}"
+                                    )
+                                    st.write(
+                                        f"**问题描述：** {issue.get('问题描述', 'N/A')}"
+                                    )
+                                    st.write(
+                                        f"**修改建议：** {issue.get('修改建议', 'N/A')}"
+                                    )
                                     if issue.get("法律依据"):
-                                        st.write(f"**法律依据：** {issue.get('法律依据', 'N/A')}")
+                                        st.write(
+                                            f"**法律依据：** {issue.get('法律依据', 'N/A')}"
+                                        )
                                     if issue.get("影响分析"):
-                                        st.write(f"**影响分析：** {issue.get('影响分析', 'N/A')}")
+                                        st.write(
+                                            f"**影响分析：** {issue.get('影响分析', 'N/A')}"
+                                        )
                                     if issue.get("商业优化"):
-                                        st.write(f"**商业优化：** {issue.get('商业优化', 'N/A')}")
+                                        st.write(
+                                            f"**商业优化：** {issue.get('商业优化', 'N/A')}"
+                                        )
 
                                 st.markdown("---")
                     else:
@@ -735,12 +1031,19 @@ def main():
                         # 显示核心摘要与建议
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.metric("风险评分", f"{statistics.get('risk_score', 0)}/100")
+                            st.metric(
+                                "风险评分", f"{statistics.get('risk_score', 0)}/100"
+                            )
                         with col2:
-                            st.metric("总问题数", statistics.get("total_issues", len(all_issues)))
+                            st.metric(
+                                "总问题数",
+                                statistics.get("total_issues", len(all_issues)),
+                            )
                         with col3:
                             risk_level = statistics.get("risk_level", "低")
-                            level_color = {"高": "🔴", "中": "🟡", "低": "🟢"}.get(risk_level, "⚪")
+                            level_color = {"高": "🔴", "中": "🟡", "低": "🟢"}.get(
+                                risk_level, "⚪"
+                            )
                             st.metric("风险等级", f"{level_color} {risk_level}")
 
                         st.markdown("---")
@@ -749,29 +1052,26 @@ def main():
 
                 # 下载结果按钮（直接下载）
                 st.markdown("---")
-                json_bytes = json.dumps(
-                    result, ensure_ascii=False, indent=2
-                ).encode("utf-8")
+                json_bytes = json.dumps(result, ensure_ascii=False, indent=2).encode(
+                    "utf-8"
+                )
                 st.download_button(
                     label="📥 下载结果",
                     data=json_bytes,
                     file_name=f"contract_analysis_{int(time.time())}.json",
                     mime="application/json",
-                    use_container_width=True,
+                    width='stretch',
                 )
 
-        # 显示文件预览
+        # 显示文件预览（重构为左右对照布局）
         if (
             st.session_state.processing_status == "idle"
             and st.session_state.preview_content
         ):
-            with st.expander("📄 文件预览", expanded=True):
-                st.text_area(
-                    "文件内容",
-                    st.session_state.preview_content,
-                    height=800,
-                    disabled=True,
-                )
+            st.markdown("### 👀 文件预览与识别对照")
+            render_preview_panel(
+                st.session_state.saved_file_path, st.session_state.preview_content
+            )
 
     else:
         st.info("请上传合同文件或选择样例文件开始分析")
