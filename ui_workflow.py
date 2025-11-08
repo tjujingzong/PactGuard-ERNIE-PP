@@ -7,12 +7,16 @@ import time
 import tempfile
 import base64
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import streamlit as st
 from contract_workflow import ContractWorkflow
 import requests
 import urllib
 import warnings
+import urllib3
+
+# 禁用SSL警告（仅在禁用SSL验证时使用）
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 页面配置
 st.set_page_config(
@@ -134,6 +138,18 @@ st.markdown(
         border-radius: 4px;
         font-size: 12px;
         font-weight: bold;
+    }
+    
+    /* 确保文本区域有滚动条 */
+    textarea {
+        overflow-y: auto !important;
+    }
+    
+    /* 同步滚动容器样式 */
+    .sync-scroll-container {
+        max-height: 780px;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     
 </style>
@@ -322,14 +338,13 @@ def _read_file_as_base64(file_path: str) -> Optional[str]:
         return None
 
 
-def render_file_preview(file_path: str, height: int = 840):
+def render_file_preview(file_path: str, height: int = 780):
     """左侧源文件预览。
 
     - PDF: 按页渲染为图片进行展示（基于 PyMuPDF）
-    - 其他: 以文本方式展示（前2K字符）
+    - 其他: 以文本方式展示（带滚动条）
     """
     file_ext = os.path.splitext(file_path)[1].lower()
-    st.markdown("#### 源文件预览")
 
     if file_ext == ".pdf":
         try:
@@ -340,7 +355,7 @@ def render_file_preview(file_path: str, height: int = 840):
                 st.warning("PDF 无页面可预览")
                 return
 
-            # 当前页（仅展示单页）
+            # 当前页（用于显示页码和跳转）
             page_key = f"pdf_page_{os.path.basename(file_path)}"
             current_page = int(st.session_state.get(page_key, 1))
             if current_page < 1:
@@ -348,14 +363,75 @@ def render_file_preview(file_path: str, height: int = 840):
             if current_page > doc.page_count:
                 current_page = doc.page_count
 
-            page = doc.load_page(current_page - 1)
-            pix = page.get_pixmap(dpi=150)
-            img_bytes = pix.tobytes("png")
-            st.image(
-                img_bytes,
-                caption=f"第{int(current_page)}页 / 共{doc.page_count}页",
-                width='stretch',
-            )
+            # 渲染所有页面到一个长容器中
+            page_images = []
+            for page_num in range(doc.page_count):
+                page = doc.load_page(page_num)
+                # 提高DPI以获得更清晰的图片
+                pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
+                img_bytes = pix.tobytes("png")
+                img_base64 = base64.b64encode(img_bytes).decode()
+                page_images.append({
+                    'page_num': page_num + 1,
+                    'img_base64': img_base64
+                })
+            
+            # 使用固定高度的可滚动容器包装所有页面
+            container_id = f"pdf-container-{os.path.basename(file_path).replace('.', '_').replace(' ', '_')}"
+            scroll_key = f"scroll_to_page_{page_key}"
+            target_page = st.session_state.get(scroll_key, current_page)
+            
+            # 构建所有页面的HTML内容
+            pages_html_content = ""
+            for page_data in page_images:
+                page_num = page_data['page_num']
+                img_base64 = page_data['img_base64']
+                pages_html_content += f'<div id="pdf-page-{page_num}" style="margin-bottom: 20px; text-align: center;"><img src="data:image/png;base64,{img_base64}" style="width: 100%; max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: block; margin: 10px auto;" /><div style="margin-top: 10px; color: #666; font-size: 12px;">第 {page_num} 页 / 共 {doc.page_count} 页</div></div>'
+            
+            # 构建完整的HTML
+            html_content = f"""
+            <div id="{container_id}" style="max-height: {height}px; overflow-y: auto; overflow-x: auto; border: 1px solid #e0e0e0; border-radius: 4px; padding: 10px; margin-bottom: 10px; background-color: #fafafa;">
+                {pages_html_content}
+            </div>
+            <script>
+                (function() {{
+                    const containerId = '{container_id}';
+                    const targetPage = {target_page};
+                    
+                    function scrollToPage(pageNum) {{
+                        const container = document.getElementById(containerId);
+                        const pageElement = document.getElementById('pdf-page-' + pageNum);
+                        if (container && pageElement) {{
+                            const scrollTop = pageElement.offsetTop - container.offsetTop - 10;
+                            container.scrollTo({{
+                                top: scrollTop,
+                                behavior: 'smooth'
+                            }});
+                        }}
+                    }}
+                    
+                    function initScroll() {{
+                        const container = document.getElementById(containerId);
+                        if (container) {{
+                            scrollToPage(targetPage);
+                        }} else {{
+                            setTimeout(initScroll, 100);
+                        }}
+                    }}
+                    
+                    if (document.readyState === 'loading') {{
+                        document.addEventListener('DOMContentLoaded', initScroll);
+                    }} else {{
+                        initScroll();
+                    }}
+                    
+                    window['scrollToPage_' + containerId] = scrollToPage;
+                }})();
+            </script>
+            """
+            
+            # 使用markdown渲染，确保HTML正确显示
+            st.markdown(html_content, unsafe_allow_html=True)
 
             # 控件放在图片正下方：上一页/页码输入/下一页
             ctrl_left, ctrl_mid, ctrl_right = st.columns([1, 2, 1])
@@ -364,6 +440,7 @@ def render_file_preview(file_path: str, height: int = 840):
                     new_page = max(1, current_page - 1)
                     if new_page != current_page:
                         st.session_state[page_key] = new_page
+                        st.session_state[scroll_key] = new_page
                         st.rerun()
             with ctrl_mid:
                 new_val = st.number_input(
@@ -377,12 +454,14 @@ def render_file_preview(file_path: str, height: int = 840):
                 )
                 if int(new_val) != current_page:
                     st.session_state[page_key] = int(new_val)
+                    st.session_state[scroll_key] = int(new_val)
                     st.rerun()
             with ctrl_right:
                 if st.button("下一页", width='stretch', key=f"next_{page_key}"):
                     new_page = min(doc.page_count, current_page + 1)
                     if new_page != current_page:
                         st.session_state[page_key] = new_page
+                        st.session_state[scroll_key] = new_page
                         st.rerun()
         except Exception:
             # 兜底：回退到文本模式
@@ -392,18 +471,197 @@ def render_file_preview(file_path: str, height: int = 840):
                 preview_file_content(file_path),
                 height=height,
                 disabled=True,
+                key="left_text_area"
             )
     else:
+        # 非PDF文件使用text_area显示，确保有滚动条
         st.text_area(
-            "文件内容", preview_file_content(file_path), height=height, disabled=True
+            "文件内容", 
+            preview_file_content(file_path), 
+            height=height, 
+            disabled=True,
+            key="left_text_area"
         )
 
 
 def render_preview_panel(file_path: str, preview_text: str):
-    """两栏预览：左侧源文件，右侧识别结果对照（参考示例UI）。"""
+    """两栏预览：左侧源文件，右侧识别结果对照（参考示例UI），支持同步滚动。"""
+    
+    # 添加同步滚动的JavaScript代码
+    sync_scroll_js = """
+    <script>
+    (function() {
+        let leftPanel = null;
+        let rightPanel = null;
+        let isScrolling = false;
+        
+        function findScrollablePanels() {
+            // 查找所有可滚动的元素
+            const allElements = document.querySelectorAll('*');
+            const scrollableElements = [];
+            
+            for (let el of allElements) {
+                const style = window.getComputedStyle(el);
+                const hasScroll = el.scrollHeight > el.clientHeight;
+                const isScrollable = style.overflow === 'auto' || 
+                                    style.overflow === 'scroll' || 
+                                    style.overflowY === 'auto' || 
+                                    style.overflowY === 'scroll';
+                
+                // 查找可滚动的容器（包括PDF图片容器和textarea）
+                if (hasScroll && isScrollable && el.offsetHeight > 200) {
+                    scrollableElements.push(el);
+                }
+            }
+            
+            // 查找右侧的textarea（用于OCR识别结果）
+            const textareas = Array.from(document.querySelectorAll('textarea'));
+            let rightTextarea = null;
+            
+            // 通过位置查找右侧的textarea
+            for (let ta of textareas) {
+                const rect = ta.getBoundingClientRect();
+                if (rect.left > window.innerWidth / 2 && 
+                    ta.scrollHeight > ta.clientHeight) {
+                    rightTextarea = ta;
+                    break;
+                }
+            }
+            
+            // 查找左侧的可滚动容器（可能是PDF图片容器或textarea）
+            let leftPanel = null;
+            
+            // 优先查找PDF容器（通过ID特征）
+            for (let el of scrollableElements) {
+                const rect = el.getBoundingClientRect();
+                // 左侧面板应该在屏幕左半部分
+                if (rect.left < window.innerWidth / 2) {
+                    // 优先选择PDF容器（ID包含pdf-container）或包含多个图片的容器
+                    if (el.id && el.id.includes('pdf-container')) {
+                        leftPanel = el;
+                        break;
+                    }
+                    // 其次选择包含图片的容器（PDF预览）
+                    if (el.querySelector('img') || el.tagName === 'TEXTAREA') {
+                        leftPanel = el;
+                        break;
+                    }
+                }
+            }
+            
+            // 如果没找到左侧面板，尝试从scrollableElements中选择最左边的
+            if (!leftPanel && scrollableElements.length > 0) {
+                scrollableElements.sort((a, b) => {
+                    return a.getBoundingClientRect().left - b.getBoundingClientRect().left;
+                });
+                leftPanel = scrollableElements[0];
+            }
+            
+            // 如果找到了左右两个面板，返回它们
+            if (leftPanel && rightTextarea && leftPanel !== rightTextarea) {
+                return [leftPanel, rightTextarea];
+            }
+            
+            // 如果找不到右侧textarea，尝试从scrollableElements中找右侧的
+            if (leftPanel && !rightTextarea && scrollableElements.length >= 2) {
+                for (let el of scrollableElements) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.left > window.innerWidth / 2 && el !== leftPanel) {
+                        return [leftPanel, el];
+                    }
+                }
+            }
+            
+            // 如果还是找不到，尝试从scrollableElements中按位置排序
+            if (scrollableElements.length >= 2) {
+                scrollableElements.sort((a, b) => {
+                    return a.getBoundingClientRect().left - b.getBoundingClientRect().left;
+                });
+                return [scrollableElements[0], scrollableElements[1]];
+            }
+            
+            return null;
+        }
+        
+        function syncScroll(source, target) {
+            if (isScrolling || !source || !target) return;
+            isScrolling = true;
+            
+            const sourceScrollTop = source.scrollTop;
+            const sourceScrollHeight = source.scrollHeight;
+            const sourceClientHeight = source.clientHeight;
+            const targetScrollHeight = target.scrollHeight;
+            const targetClientHeight = target.clientHeight;
+            
+            if (sourceScrollHeight <= sourceClientHeight || targetScrollHeight <= targetClientHeight) {
+                isScrolling = false;
+                return;
+            }
+            
+            // 计算目标滚动位置（按比例）
+            const scrollRatio = sourceScrollTop / (sourceScrollHeight - sourceClientHeight);
+            const targetScrollTop = scrollRatio * (targetScrollHeight - targetClientHeight);
+            
+            target.scrollTop = targetScrollTop;
+            
+            setTimeout(() => { isScrolling = false; }, 10);
+        }
+        
+        function initSyncScroll() {
+            const panels = findScrollablePanels();
+            if (panels && panels.length === 2) {
+                leftPanel = panels[0];
+                rightPanel = panels[1];
+                
+                // 移除旧的事件监听器（如果存在）
+                if (leftPanel._syncScrollHandler) {
+                    leftPanel.removeEventListener('scroll', leftPanel._syncScrollHandler);
+                }
+                if (rightPanel._syncScrollHandler) {
+                    rightPanel.removeEventListener('scroll', rightPanel._syncScrollHandler);
+                }
+                
+                // 添加新的事件监听器
+                leftPanel._syncScrollHandler = () => syncScroll(leftPanel, rightPanel);
+                rightPanel._syncScrollHandler = () => syncScroll(rightPanel, leftPanel);
+                
+                leftPanel.addEventListener('scroll', leftPanel._syncScrollHandler, { passive: true });
+                rightPanel.addEventListener('scroll', rightPanel._syncScrollHandler, { passive: true });
+            }
+        }
+        
+        // 使用MutationObserver监听DOM变化
+        const observer = new MutationObserver(() => {
+            setTimeout(initSyncScroll, 100);
+        });
+        
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+        
+        // 初始执行
+        setTimeout(initSyncScroll, 1000);
+        
+        // 页面滚动时也尝试初始化
+        window.addEventListener('load', () => {
+            setTimeout(initSyncScroll, 500);
+        });
+    })();
+    </script>
+    """
+    
+    # 注入JavaScript
+    st.components.v1.html(sync_scroll_js, height=0)
+    
     left, right = st.columns([1, 1], gap="large")
+    
     with left:
-        render_file_preview(file_path)
+        # 使用容器包装左侧内容，确保有滚动条
+        st.markdown("#### 源文件预览")
+        left_container = st.container()
+        with left_container:
+            render_file_preview(file_path)
 
     with right:
         st.markdown("#### 解析结果对照")
@@ -418,22 +676,32 @@ def render_preview_panel(file_path: str, preview_text: str):
                     st.rerun()
             with colB:
                 if st.session_state.ocr_parse_result:
-                    st.success("已获取在线解析结果")
+                    if st.session_state.ocr_parse_result.get("_cached"):
+                        st.info("已从缓存加载解析结果")
+                    else:
+                        st.success("已获取在线解析结果")
 
-            # 展示解析文本（若无在线结果，回退到本地预览文本）
+            # OCR识别对照：显示json_result格式化后的文本
             ocr_text = None
             if st.session_state.ocr_parse_result and isinstance(
                 st.session_state.ocr_parse_result, dict
             ):
-                ocr_text = st.session_state.ocr_parse_result.get(
-                    "markdown_text"
-                ) or st.session_state.ocr_parse_result.get("raw_text")
+                json_result = st.session_state.ocr_parse_result.get("json_result", {})
+                if json_result:
+                    ocr_text = format_json_result_as_text(json_result)
+                else:
+                    ocr_text = st.session_state.ocr_parse_result.get("raw_text", preview_text)
+            else:
+                ocr_text = preview_text
+            
+            # 使用固定高度的文本区域，确保有滚动条
             st.text_area(
                 "识别文本",
                 ocr_text if ocr_text else preview_text,
                 height=780,
                 disabled=True,
                 label_visibility="collapsed",
+                key="right_text_area"
             )
 
             # 若有在线解析的原始返回，提供调试输出
@@ -444,29 +712,288 @@ def render_preview_panel(file_path: str, preview_text: str):
                     st.json(st.session_state.ocr_parse_result)
 
         with tabs[1]:
-            # 将预览文本按markdown渲染（若非MD也可正常显示）
-            st.markdown(
-                preview_text if isinstance(preview_text, str) else str(preview_text)
-            )
+            # Markdown tab：显示从markdown_url下载下来的文件渲染的结果
+            markdown_content = None
+            if st.session_state.ocr_parse_result and isinstance(
+                st.session_state.ocr_parse_result, dict
+            ):
+                markdown_content = st.session_state.ocr_parse_result.get("markdown_text")
+            
+            if markdown_content:
+                # 使用固定高度的容器确保可滚动，使用Streamlit的markdown渲染
+                st.markdown(
+                    """
+                    <style>
+                    .markdown-scroll-container {
+                        max-height: 780px;
+                        overflow-y: auto;
+                        overflow-x: auto;
+                        padding: 10px;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 4px;
+                        background-color: #fafafa;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True
+                )
+                # 使用Streamlit的markdown渲染
+                st.markdown(markdown_content)
+            else:
+                # 如果没有markdown内容，显示预览文本
+                st.text_area(
+                    "预览文本",
+                    preview_text if isinstance(preview_text, str) else str(preview_text),
+                    height=780,
+                    disabled=True,
+                    label_visibility="collapsed",
+                    key="markdown_preview_area"
+                )
 
         with tabs[2]:
-            # 若有外部解析JSON，可在此处填充；当前给出提示占位
-            if (
+            # JSON tab：显示json_result的原始JSON格式
+            if st.session_state.ocr_parse_result and isinstance(
+                st.session_state.ocr_parse_result, dict
+            ):
+                json_result = st.session_state.ocr_parse_result.get("json_result", {})
+                if json_result:
+                    st.json(json_result)
+                else:
+                    st.info("暂无JSON结果。")
+            elif (
                 hasattr(st.session_state, "workflow_result")
                 and st.session_state.workflow_result
                 and isinstance(st.session_state.workflow_result, dict)
             ):
                 st.json(st.session_state.workflow_result)
-            elif st.session_state.ocr_parse_result and isinstance(
-                st.session_state.ocr_parse_result, dict
-            ):
-                st.json(st.session_state.ocr_parse_result.get("json_result", {}))
             else:
                 st.info("暂无JSON结果。启动分析后将在此展示结构化数据。")
 
 
+def get_cache_file_paths(file_path: str) -> Tuple[str, str]:
+    """根据文件路径生成缓存文件路径（json和md）"""
+    import hashlib
+    # 使用文件路径的hash值作为缓存文件名，避免特殊字符问题
+    file_hash = hashlib.md5(file_path.encode('utf-8')).hexdigest()
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+    # 组合文件名和hash，确保唯一性
+    cache_name = f"{base_name}_{file_hash}"
+    
+    json_path = os.path.join("jsons", f"{cache_name}.json")
+    md_path = os.path.join("mds", f"{cache_name}.md")
+    
+    return json_path, md_path
+
+
+def load_cached_parse_result(file_path: str) -> Optional[Dict[str, Any]]:
+    """从缓存加载解析结果"""
+    json_path, md_path = get_cache_file_paths(file_path)
+    
+    if not (os.path.exists(json_path) and os.path.exists(md_path)):
+        return None
+    
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            json_result = json.load(f)
+        with open(md_path, "r", encoding="utf-8") as f:
+            markdown_text = f.read()
+        
+        return {
+            "json_result": json_result,
+            "markdown_text": markdown_text,
+            "raw_text": preview_file_content(file_path),
+            "_cached": True,
+        }
+    except Exception as e:
+        print(f"加载缓存失败: {e}")
+        return None
+
+
+def save_parse_result(file_path: str, json_result: Dict[str, Any], markdown_text: str):
+    """保存解析结果到缓存文件"""
+    json_path, md_path = get_cache_file_paths(file_path)
+    
+    # 确保目录存在
+    os.makedirs("jsons", exist_ok=True)
+    os.makedirs("mds", exist_ok=True)
+    
+    try:
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(json_result, f, ensure_ascii=False, indent=2)
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(markdown_text)
+        print(f"已保存解析结果: {json_path}, {md_path}")
+    except Exception as e:
+        print(f"保存解析结果失败: {e}")
+
+
+def format_json_result_as_text(json_result: Dict[str, Any]) -> str:
+    """将JSON结果格式化为可读文本，包含位置信息"""
+    if not json_result:
+        return "暂无JSON结果"
+    
+    lines = []
+    
+    # 处理文件基本信息
+    if "file_name" in json_result:
+        lines.append(f"📄 文件名: {json_result.get('file_name', 'N/A')}")
+        lines.append(f"🆔 文件ID: {json_result.get('file_id', 'N/A')}")
+        lines.append("")
+    
+    # 处理页面信息
+    pages = json_result.get("pages", [])
+    if pages:
+        lines.append(f"📑 共 {len(pages)} 页")
+        lines.append("=" * 80)
+        lines.append("")
+        
+        for page_idx, page in enumerate(pages):
+            page_num = page.get("page_num", page_idx)
+            page_id = page.get("page_id", f"page-{page_idx}")
+            
+            lines.append(f"📄 第 {page_num + 1} 页 (page_id: {page_id})")
+            lines.append("-" * 80)
+            
+            # 页面元信息
+            meta = page.get("meta", {})
+            if meta:
+                page_width = meta.get("page_width", 0)
+                page_height = meta.get("page_height", 0)
+                lines.append(f"   📏 页面尺寸: {page_width} × {page_height} 像素")
+                lines.append(f"   📐 页面类型: {meta.get('page_type', 'N/A')}")
+                lines.append("")
+            
+            # 处理布局信息（layouts）
+            layouts = page.get("layouts", [])
+            if layouts:
+                lines.append(f"   📋 布局元素 ({len(layouts)} 个):")
+                lines.append("")
+                
+                # 按层级组织布局（先显示根节点，再显示子节点）
+                layout_dict = {layout.get("layout_id"): layout for layout in layouts}
+                root_layouts = [layout for layout in layouts if layout.get("parent") == "root"]
+                
+                def format_layout(layout, indent_level=2):
+                    """格式化单个布局元素"""
+                    indent = "  " * indent_level
+                    layout_id = layout.get("layout_id", "N/A")
+                    layout_type = layout.get("type", "N/A")
+                    sub_type = layout.get("sub_type", "")
+                    text = layout.get("text", "").strip()
+                    position = layout.get("position", [])
+                    parent = layout.get("parent", "N/A")
+                    children = layout.get("children", [])
+                    
+                    # 格式化位置信息
+                    if position and len(position) >= 4:
+                        x, y, w, h = position[0], position[1], position[2], position[3]
+                        pos_str = f"位置: ({x}, {y}) 尺寸: {w}×{h}"
+                    else:
+                        pos_str = "位置: N/A"
+                    
+                    # 类型标签
+                    type_label = f"{layout_type}"
+                    if sub_type:
+                        type_label += f"/{sub_type}"
+                    
+                    # 构建显示内容
+                    result = []
+                    result.append(f"{indent}┌─ [{type_label}] {layout_id}")
+                    result.append(f"{indent}│  {pos_str}")
+                    if text:
+                        # 限制文本长度，避免过长
+                        text_preview = text.replace("\n", "\\n")[:100]
+                        if len(text) > 100:
+                            text_preview += "..."
+                        result.append(f"{indent}│  文本: {text_preview}")
+                    if parent != "root":
+                        result.append(f"{indent}│  父节点: {parent}")
+                    if children:
+                        result.append(f"{indent}│  子节点: {', '.join(children)}")
+                    result.append(f"{indent}└─")
+                    
+                    return result
+                
+                # 递归处理布局树
+                def process_layout_tree(layout, indent_level=2, processed=None):
+                    """递归处理布局树结构"""
+                    if processed is None:
+                        processed = set()
+                    
+                    layout_id = layout.get("layout_id")
+                    if layout_id in processed:
+                        return []
+                    
+                    processed.add(layout_id)
+                    result = format_layout(layout, indent_level)
+                    
+                    # 处理子节点
+                    children_ids = layout.get("children", [])
+                    if children_ids:
+                        for child_id in children_ids:
+                            if child_id in layout_dict:
+                                child_layout = layout_dict[child_id]
+                                child_result = process_layout_tree(child_layout, indent_level + 1, processed)
+                                result.extend(child_result)
+                    
+                    return result
+                
+                # 处理所有根布局（parent为"root"的布局）
+                processed_ids = set()
+                for root_layout in root_layouts:
+                    layout_lines = process_layout_tree(root_layout, indent_level=2, processed=processed_ids)
+                    lines.extend(layout_lines)
+                    lines.append("")
+                
+                # 显示未处理的布局（parent不是"root"且不在任何children中的布局）
+                orphan_layouts = [layout for layout in layouts 
+                                 if layout.get("layout_id") not in processed_ids]
+                if orphan_layouts:
+                    lines.append("   ⚠️  其他布局元素:")
+                    for orphan in orphan_layouts:
+                        layout_lines = format_layout(orphan, indent_level=2)
+                        lines.extend(layout_lines)
+                        lines.append("")
+            
+            # 处理表格
+            tables = page.get("tables", [])
+            if tables:
+                lines.append(f"   📊 表格 ({len(tables)} 个):")
+                for i, table in enumerate(tables):
+                    lines.append(f"      [{i+1}] 表格ID: {table.get('table_id', 'N/A')}")
+                    if "position" in table:
+                        pos = table["position"]
+                        if len(pos) >= 4:
+                            lines.append(f"          位置: ({pos[0]}, {pos[1]}) 尺寸: {pos[2]}×{pos[3]}")
+                lines.append("")
+            
+            # 处理图片
+            images = page.get("images", [])
+            if images:
+                lines.append(f"   🖼️  图片 ({len(images)} 个):")
+                for i, image in enumerate(images):
+                    lines.append(f"      [{i+1}] 图片ID: {image.get('image_id', 'N/A')}")
+                    if "position" in image:
+                        pos = image["position"]
+                        if len(pos) >= 4:
+                            lines.append(f"          位置: ({pos[0]}, {pos[1]}) 尺寸: {pos[2]}×{pos[3]}")
+                lines.append("")
+            
+            lines.append("")
+            lines.append("=" * 80)
+            lines.append("")
+    
+    return "\n".join(lines)
+
+
 def call_online_parse_api(file_path: str) -> Optional[Dict[str, Any]]:
     """调用百度文档解析在线API，并返回解析文本/JSON/下载链接。"""
+    # 先检查缓存
+    cached_result = load_cached_parse_result(file_path)
+    if cached_result:
+        print(f"从缓存加载解析结果: {file_path}")
+        return cached_result
+    
     try:
         create_url = "https://aip.baidubce.com/rest/2.0/brain/online/v2/parser/task"
         query_url = (
@@ -490,44 +1017,133 @@ def call_online_parse_api(file_path: str) -> Optional[Dict[str, Any]]:
             "Authorization": "Bearer bce-v3/ALTAK-IS6uG1qXcgDDP9RrmjYD9/ede55d516092e0ca5e9041eab19455df12c7db7f",
         }
 
-        resp = requests.post(create_url, headers=headers, data=payload.encode("utf-8"))
-        data = (
-            resp.json()
-            if resp.headers.get("content-type", "").startswith("application/json")
-            else {}
-        )
+        # 添加重试机制和超时设置
+        max_retries = 3
+        retry_delay = 2  # 秒
+        resp = None
+        data = {}
+        
+        for attempt in range(max_retries):
+            try:
+                # 根据文件大小动态设置超时时间（大文件需要更长时间）
+                file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+                # 基础超时30秒，大文件（>5MB）增加到60秒
+                timeout = 60 if file_size > 5 * 1024 * 1024 else 30
+                
+                resp = requests.post(
+                    create_url, 
+                    headers=headers, 
+                    data=payload.encode("utf-8"),
+                    timeout=timeout,
+                    verify=True  # 启用SSL验证
+                )
+                resp.raise_for_status()  # 检查HTTP错误
+                
+                data = (
+                    resp.json()
+                    if resp.headers.get("content-type", "").startswith("application/json")
+                    else {}
+                )
+                break  # 成功则退出重试循环
+                
+            except requests.exceptions.SSLError as e:
+                if attempt < max_retries - 1:
+                    print(f"SSL错误，第{attempt + 1}次重试... 错误: {str(e)}")
+                    time.sleep(retry_delay * (attempt + 1))  # 指数退避
+                else:
+                    # 最后一次尝试，如果还是SSL错误，尝试禁用SSL验证（不推荐但作为备选）
+                    try:
+                        print("最后一次尝试，临时禁用SSL验证（仅用于解决SSL连接问题）...")
+                        st.warning("⚠️ 检测到SSL连接问题，正在尝试备用连接方式...")
+                        resp = requests.post(
+                            create_url, 
+                            headers=headers, 
+                            data=payload.encode("utf-8"),
+                            timeout=timeout,
+                            verify=False  # 临时禁用SSL验证
+                        )
+                        resp.raise_for_status()
+                        data = (
+                            resp.json()
+                            if resp.headers.get("content-type", "").startswith("application/json")
+                            else {}
+                        )
+                        st.info("✅ 已通过备用方式连接成功")
+                        break
+                    except Exception as e2:
+                        st.error(f"调用在线解析API失败（SSL错误）: {str(e2)}")
+                        st.info("💡 建议：检查网络连接或稍后重试。如果问题持续，可能是服务器端SSL配置问题。")
+                        print(f"详细错误信息: {type(e2).__name__}: {str(e2)}")
+                        return None
+                        
+            except requests.exceptions.Timeout as e:
+                if attempt < max_retries - 1:
+                    print(f"请求超时，第{attempt + 1}次重试...")
+                    time.sleep(retry_delay * (attempt + 1))
+                else:
+                    st.error(f"请求超时: 文件可能过大，请稍后重试")
+                    return None
+                    
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    print(f"请求错误，第{attempt + 1}次重试... 错误: {str(e)}")
+                    time.sleep(retry_delay * (attempt + 1))
+                else:
+                    st.error(f"调用在线解析API失败: {str(e)}")
+                    print(f"详细错误信息: {type(e).__name__}: {str(e)}")
+                    return None
+        
+        if not resp:
+            st.error("创建在线解析任务失败：无法连接到服务器")
+            return None
+            
         task_id = (
             (data.get("result", {}) or {}).get("task_id")
             if isinstance(data, dict)
             else None
         )
         if not task_id:
-            st.error("创建在线解析任务失败")
+            error_msg = data.get("error_msg", "未知错误")
+            st.error(f"创建在线解析任务失败: {error_msg}")
             return None
 
-        # 轮询
-        max_retries = 30
+        # 轮询查询任务状态
+        max_query_retries = 30
         interval = 2
         result_json: Optional[Dict[str, Any]] = None
-        for _ in range(max_retries):
-            q = requests.post(
-                query_url,
-                headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/json",
-                    "Authorization": "Bearer bce-v3/ALTAK-IS6uG1qXcgDDP9RrmjYD9/ede55d516092e0ca5e9041eab19455df12c7db7f",
-                },
-                data=f"task_id={task_id}".encode("utf-8"),
-            )
+        query_headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "Authorization": "Bearer bce-v3/ALTAK-IS6uG1qXcgDDP9RrmjYD9/ede55d516092e0ca5e9041eab19455df12c7db7f",
+        }
+        
+        for i in range(max_query_retries):
             try:
-                result_json = q.json()
-            except Exception:
-                result_json = None
-            status = (result_json or {}).get("result", {}).get("status")
-            if status == "success":
-                break
-            if status in ("failed", "error"):
-                break
+                q = requests.post(
+                    query_url,
+                    headers=query_headers,
+                    data=f"task_id={task_id}".encode("utf-8"),
+                    timeout=30,
+                    verify=True
+                )
+                q.raise_for_status()
+                try:
+                    result_json = q.json()
+                except Exception:
+                    result_json = None
+                status = (result_json or {}).get("result", {}).get("status")
+                if status == "success":
+                    break
+                if status in ("failed", "error"):
+                    error_msg = (result_json or {}).get("result", {}).get("task_error", "未知错误")
+                    st.warning(f"任务处理失败: {error_msg}")
+                    break
+            except requests.exceptions.RequestException as e:
+                if i < max_query_retries - 1:
+                    print(f"查询任务状态失败，重试中... ({i+1}/{max_query_retries})")
+                else:
+                    st.error(f"查询任务状态失败: {str(e)}")
+                    return None
             time.sleep(interval)
 
         if not result_json:
@@ -542,16 +1158,28 @@ def call_online_parse_api(file_path: str) -> Optional[Dict[str, Any]]:
         markdown_text: Optional[str] = None
         try:
             if parse_result_url:
-                jr = requests.get(parse_result_url, timeout=20)
+                jr = requests.get(parse_result_url, timeout=30, verify=True)
+                jr.raise_for_status()
+                # 显式设置编码为UTF-8，避免中文乱码
+                jr.encoding = 'utf-8'
                 json_result = jr.json() if jr.ok else {}
-        except Exception:
+        except requests.exceptions.RequestException as e:
+            print(f"下载JSON结果失败: {str(e)}")
             json_result = {}
         try:
             if markdown_url:
-                mr = requests.get(markdown_url, timeout=20)
+                mr = requests.get(markdown_url, timeout=30, verify=True)
+                mr.raise_for_status()
+                # 显式设置编码为UTF-8，避免中文乱码
+                mr.encoding = 'utf-8'
                 markdown_text = mr.text if mr.ok else None
-        except Exception:
+        except requests.exceptions.RequestException as e:
+            print(f"下载Markdown结果失败: {str(e)}")
             markdown_text = None
+
+        # 保存到缓存
+        if json_result and markdown_text:
+            save_parse_result(file_path, json_result, markdown_text)
 
         result_payload = {
             "task_id": task_id,
