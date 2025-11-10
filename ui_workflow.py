@@ -6,6 +6,7 @@ import json
 import time
 import tempfile
 import base64
+from io import BytesIO
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 import streamlit as st
@@ -14,6 +15,7 @@ import requests
 import urllib
 import warnings
 import urllib3
+from PIL import Image
 
 # 禁用SSL警告（仅在禁用SSL验证时使用）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -37,6 +39,63 @@ st.markdown(
     .main-container {
         padding: 1px 2px;
         background-color: #f8f9fa;
+    }
+    
+    div:has(> #left-preview-anchor),
+    div:has(> #right-panel-anchor) {
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        background-color: #fff;
+        padding: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    
+    div:has(> #left-preview-anchor) {
+        height: 860px;
+        overflow: auto;
+    }
+    
+    div:has(> #right-panel-anchor) {
+        height: 860px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+    
+    .overall-image-wrapper {
+        max-height: 780px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 12px;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        background-color: #fafafa;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .overall-image-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .overall-image-item img {
+        width: 100%;
+        max-width: 100%;
+        height: auto;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .overall-image-caption {
+        font-size: 12px;
+        color: #666;
+        text-align: center;
     }
     
     /* 减少页面顶部空白 */
@@ -145,6 +204,18 @@ st.markdown(
         overflow-y: auto !important;
     }
     
+    /* 特别针对右侧OCR识别对照区域的文本区域 - 设置为白色背景 */
+    div[data-testid="stTextArea"] textarea,
+    textarea.stTextArea {
+        background-color: white !important;
+    }
+    
+    /* 针对所有禁用的文本区域（通常用于显示） */
+    textarea:disabled {
+        background-color: white !important;
+        opacity: 1 !important;
+    }
+    
     /* 同步滚动容器样式 */
     .sync-scroll-container {
         max-height: 780px;
@@ -175,6 +246,12 @@ def initialize_session_state():
     if "ocr_parse_result" not in st.session_state:
         # 用于右侧对照面板的在线解析结果缓存
         st.session_state.ocr_parse_result = None
+    if "ocr_parsed_file_path" not in st.session_state:
+        # 记录上次OCR解析的文件路径，用于检查文件是否切换
+        st.session_state.ocr_parsed_file_path = None
+    if "view_mode" not in st.session_state:
+        # preview: 预览界面；analysis: 分析结果界面
+        st.session_state.view_mode = "preview"
 
 
 def load_latest_result_by_filename(file_name: str) -> Optional[Dict[str, Any]]:
@@ -487,6 +564,20 @@ def render_file_preview(file_path: str, height: int = 780):
 def render_preview_panel(file_path: str, preview_text: str):
     """两栏预览：左侧源文件，右侧识别结果对照（参考示例UI），支持同步滚动。"""
     
+    # 检查文件路径是否改变，如果改变则尝试加载新文件的缓存
+    if st.session_state.ocr_parsed_file_path != file_path:
+        # 尝试加载新文件的缓存（使用原始文件名）
+        original_file_name = st.session_state.get("file_name")
+        cached_result = load_cached_parse_result(file_path, original_file_name)
+        if cached_result:
+            # 如果有缓存，加载并显示
+            st.session_state.ocr_parse_result = cached_result
+            st.session_state.ocr_parsed_file_path = file_path
+        else:
+            # 如果没有缓存，清空OCR解析结果
+            st.session_state.ocr_parse_result = None
+            st.session_state.ocr_parsed_file_path = None
+    
     # 添加同步滚动的JavaScript代码
     sync_scroll_js = """
     <script>
@@ -657,161 +748,335 @@ def render_preview_panel(file_path: str, preview_text: str):
     left, right = st.columns([1, 1], gap="large")
     
     with left:
-        # 使用容器包装左侧内容，确保有滚动条
         st.markdown("#### 源文件预览")
         left_container = st.container()
         with left_container:
+            st.markdown('<span id="left-preview-anchor"></span>', unsafe_allow_html=True)
             render_file_preview(file_path)
 
     with right:
         st.markdown("#### 解析结果对照")
-        tabs = st.tabs(["OCR识别对照", "Markdown", "JSON"])
+        right_container = st.container()
+        with right_container:
+            st.markdown('<span id="right-panel-anchor"></span>', unsafe_allow_html=True)
+            tabs = st.tabs(["OCR识别对照", "Markdown", "JSON"])
 
-        with tabs[0]:
-            # 在线API调用：百度文档解析（需要设置环境变量 BAIDU_PARSER_AUTH）
-            colA, colB = st.columns([1, 1])
-            with colA:
-                if st.button("▶ 调用OCR解析", key="btn_call_ocr"):
-                    st.session_state.ocr_parse_result = call_online_parse_api(file_path)
-                    st.rerun()
-            with colB:
-                if st.session_state.ocr_parse_result:
-                    if st.session_state.ocr_parse_result.get("_cached"):
-                        st.info("已从缓存加载解析结果")
+            with tabs[0]:
+                # 在线API调用：百度文档解析（需要设置环境变量 BAIDU_PARSER_AUTH）
+                colA, colB = st.columns([1, 1])
+                with colA:
+                    if st.button("▶ 调用OCR解析", key="btn_call_ocr"):
+                        st.session_state.ocr_parse_result = call_online_parse_api(file_path)
+                        st.session_state.ocr_parsed_file_path = file_path  # 记录当前解析的文件路径
+                        st.rerun()
+                with colB:
+                    if st.session_state.ocr_parse_result:
+                        if st.session_state.ocr_parse_result.get("_cached"):
+                            st.info("已从缓存加载解析结果")
+                        else:
+                            st.success("已获取在线解析结果")
+
+                # 自动展示整体OCR图
+                img_paths: List[str] = []
+                if st.session_state.ocr_parse_result and isinstance(
+                    st.session_state.ocr_parse_result, dict
+                ):
+                    img_paths = st.session_state.ocr_parse_result.get("overall_image_paths") or []
+                if img_paths:
+                    st.markdown("##### 整体OCR图")
+                    image_blocks: List[str] = []
+                    for p in img_paths:
+                        if not os.path.exists(p):
+                            continue
+                        caption = os.path.basename(p)
+                        try:
+                            with Image.open(p) as img:
+                                width, height = img.size
+                                crop_left = width // 2
+                                right_half = img.crop((crop_left, 0, width, height)).copy()
+                                buffer = BytesIO()
+                                right_half.save(buffer, format="PNG")
+                                img_data = base64.b64encode(buffer.getvalue()).decode()
+                        except Exception as exc:
+                            st.warning(f"加载整体OCR图失败：{caption}，原因：{exc}")
+                            try:
+                                with open(p, "rb") as fallback_file:
+                                    img_data = base64.b64encode(fallback_file.read()).decode()
+                            except Exception:
+                                continue
+                        image_blocks.append(
+                            (
+                                '<div class="overall-image-item">'
+                                f'<img src="data:image/png;base64,{img_data}" alt="{caption}" />'
+                                f'<div class="overall-image-caption">{caption}</div>'
+                                "</div>"
+                            )
+                        )
+                    if image_blocks:
+                        images_html = '<div class="overall-image-wrapper">' + "".join(image_blocks) + "</div>"
+                        st.markdown(images_html, unsafe_allow_html=True)
+                elif st.session_state.ocr_parse_result:
+                    st.info("暂无整体OCR图可展示")
+
+                # OCR识别对照：从JSON中提取文字、位置、排版等信息并渲染
+                # 在调用OCR解析之前应该显示为空
+                ocr_text = None
+                if st.session_state.ocr_parse_result and isinstance(
+                    st.session_state.ocr_parse_result, dict
+                ):
+                    json_result = st.session_state.ocr_parse_result.get("json_result", {})
+                    if json_result:
+                        # 使用format_json_result_as_text函数从JSON中提取并格式化信息
+                        ocr_text = format_json_result_as_text(json_result)
                     else:
-                        st.success("已获取在线解析结果")
-
-            # OCR识别对照：显示json_result格式化后的文本
-            ocr_text = None
-            if st.session_state.ocr_parse_result and isinstance(
-                st.session_state.ocr_parse_result, dict
-            ):
-                json_result = st.session_state.ocr_parse_result.get("json_result", {})
-                if json_result:
-                    ocr_text = format_json_result_as_text(json_result)
+                        # 如果没有JSON结果，使用原始文本
+                        ocr_text = st.session_state.ocr_parse_result.get("raw_text", "")
                 else:
-                    ocr_text = st.session_state.ocr_parse_result.get("raw_text", preview_text)
-            else:
-                ocr_text = preview_text
-            
-            # 使用固定高度的文本区域，确保有滚动条
-            st.text_area(
-                "识别文本",
-                ocr_text if ocr_text else preview_text,
-                height=780,
-                disabled=True,
-                label_visibility="collapsed",
-                key="right_text_area"
-            )
-
-            # 若有在线解析的原始返回，提供调试输出
-            if st.session_state.ocr_parse_result and isinstance(
-                st.session_state.ocr_parse_result, dict
-            ):
-                with st.expander("API 调试输出", expanded=False):
-                    st.json(st.session_state.ocr_parse_result)
-
-        with tabs[1]:
-            # Markdown tab：显示从markdown_url下载下来的文件渲染的结果
-            markdown_content = None
-            if st.session_state.ocr_parse_result and isinstance(
-                st.session_state.ocr_parse_result, dict
-            ):
-                markdown_content = st.session_state.ocr_parse_result.get("markdown_text")
-            
-            if markdown_content:
-                # 使用固定高度的容器确保可滚动，使用Streamlit的markdown渲染
-                st.markdown(
-                    """
-                    <style>
-                    .markdown-scroll-container {
-                        max-height: 780px;
-                        overflow-y: auto;
-                        overflow-x: auto;
-                        padding: 10px;
-                        border: 1px solid #e0e0e0;
-                        border-radius: 4px;
-                        background-color: #fafafa;
-                    }
-                    </style>
-                    """,
-                    unsafe_allow_html=True
-                )
-                # 使用Streamlit的markdown渲染
-                st.markdown(markdown_content)
-            else:
-                # 如果没有markdown内容，显示预览文本
+                    ocr_text = ""  # 调用OCR解析之前显示为空
+                
+                # 使用固定高度的文本区域，确保有滚动条
                 st.text_area(
-                    "预览文本",
-                    preview_text if isinstance(preview_text, str) else str(preview_text),
+                    "识别文本",
+                    ocr_text if ocr_text else "",
                     height=780,
                     disabled=True,
                     label_visibility="collapsed",
-                    key="markdown_preview_area"
+                    key="right_text_area"
                 )
 
-        with tabs[2]:
-            # JSON tab：显示json_result的原始JSON格式
-            if st.session_state.ocr_parse_result and isinstance(
-                st.session_state.ocr_parse_result, dict
-            ):
-                json_result = st.session_state.ocr_parse_result.get("json_result", {})
-                if json_result:
-                    st.json(json_result)
+                # 若有在线解析的原始返回，提供调试输出
+                if st.session_state.ocr_parse_result and isinstance(
+                    st.session_state.ocr_parse_result, dict
+                ):
+                    with st.expander("API 调试输出", expanded=False):
+                        st.json(st.session_state.ocr_parse_result)
+
+            with tabs[1]:
+                # Markdown tab：显示从markdown_url下载下来的文件渲染的结果
+                # 在调用OCR解析之前应该显示为空
+                markdown_content = None
+                if st.session_state.ocr_parse_result and isinstance(
+                    st.session_state.ocr_parse_result, dict
+                ):
+                    markdown_content = st.session_state.ocr_parse_result.get("markdown_text")
+                
+                if markdown_content:
+                    # 使用固定高度的容器确保可滚动，使用Streamlit的markdown渲染
+                    st.markdown(
+                        """
+                        <style>
+                        .markdown-scroll-container {
+                            max-height: 780px;
+                            overflow-y: auto;
+                            overflow-x: auto;
+                            padding: 10px;
+                            border: 1px solid #e0e0e0;
+                            border-radius: 4px;
+                            background-color: #fafafa;
+                        }
+                        </style>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                    # 使用Streamlit的markdown渲染
+                    st.markdown(markdown_content)
                 else:
-                    st.info("暂无JSON结果。")
-            elif (
-                hasattr(st.session_state, "workflow_result")
-                and st.session_state.workflow_result
-                and isinstance(st.session_state.workflow_result, dict)
-            ):
-                st.json(st.session_state.workflow_result)
-            else:
-                st.info("暂无JSON结果。启动分析后将在此展示结构化数据。")
+                    # 调用OCR解析之前显示为空
+                    st.text_area(
+                        "Markdown内容",
+                        "",
+                        height=780,
+                        disabled=True,
+                        label_visibility="collapsed",
+                        key="markdown_preview_area"
+                    )
+
+            with tabs[2]:
+                # JSON tab：显示json_result的原始JSON格式
+                # 在调用OCR解析之前应该显示为空
+                if st.session_state.ocr_parse_result and isinstance(
+                    st.session_state.ocr_parse_result, dict
+                ):
+                    json_result = st.session_state.ocr_parse_result.get("json_result", {})
+                    if json_result:
+                        st.json(json_result)
+                    else:
+                        st.info("暂无JSON结果。")
+                else:
+                    # 调用OCR解析之前显示为空
+                    st.text_area(
+                        "JSON内容",
+                        "",
+                        height=780,
+                        disabled=True,
+                        label_visibility="collapsed",
+                        key="json_preview_area"
+                    )
 
 
-def get_cache_file_paths(file_path: str) -> Tuple[str, str]:
-    """根据文件路径生成缓存文件路径（json和md）"""
-    import hashlib
-    # 使用文件路径的hash值作为缓存文件名，避免特殊字符问题
-    file_hash = hashlib.md5(file_path.encode('utf-8')).hexdigest()
-    base_name = os.path.splitext(os.path.basename(file_path))[0]
-    # 组合文件名和hash，确保唯一性
-    cache_name = f"{base_name}_{file_hash}"
+def get_cache_file_paths(file_path: str, original_file_name: Optional[str] = None) -> Tuple[str, str]:
+    """根据文件路径生成缓存文件路径（json和md）
     
-    json_path = os.path.join("jsons", f"{cache_name}.json")
-    md_path = os.path.join("mds", f"{cache_name}.md")
+    优先使用原始文件名（original_file_name），如果没有则使用文件路径中的文件名。
+    使用PDF文件名（去掉扩展名）作为基础名称，便于与PDF对应。
+    如果文件名包含特殊字符，会进行清理以确保文件系统兼容性。
+    """
+    import re
+    # 优先使用原始文件名，如果没有则使用文件路径中的文件名
+    if original_file_name:
+        base_name = os.path.splitext(original_file_name)[0]
+    else:
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+    
+    # 清理文件名中的特殊字符，只保留字母、数字、中文、数字、下划线和连字符
+    # 替换其他特殊字符为下划线
+    safe_name = re.sub(r'[^\w\u4e00-\u9fff-]', '_', base_name)
+    # 去除连续的下划线
+    safe_name = re.sub(r'_+', '_', safe_name)
+    # 去除首尾的下划线
+    safe_name = safe_name.strip('_')
+    
+    # 如果清理后为空，使用默认名称
+    if not safe_name:
+        safe_name = "unnamed_file"
+    
+    json_path = os.path.join("jsons", f"{safe_name}.json")
+    md_path = os.path.join("mds", f"{safe_name}.md")
     
     return json_path, md_path
 
 
-def load_cached_parse_result(file_path: str) -> Optional[Dict[str, Any]]:
-    """从缓存加载解析结果"""
-    json_path, md_path = get_cache_file_paths(file_path)
+def get_overall_image_dir(file_path: str, original_file_name: Optional[str] = None) -> str:
+    """获取整体OCR图片保存目录（按原文件名区分）。"""
+    json_path, _ = get_cache_file_paths(file_path, original_file_name)
+    safe_name = os.path.splitext(os.path.basename(json_path))[0]
+    base_dir = "Eoverall_ocr_res"
+    return os.path.join(base_dir, safe_name)
+
+
+def load_cached_parse_result(file_path: str, original_file_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """从缓存加载解析结果
     
-    if not (os.path.exists(json_path) and os.path.exists(md_path)):
-        return None
+    首先尝试使用新格式的缓存文件名（基于原始文件名），
+    如果找不到，则尝试通过文件内容匹配来查找旧格式的缓存。
+    """
+    import glob
     
+    # 首先尝试新格式的缓存
+    json_path, md_path = get_cache_file_paths(file_path, original_file_name)
+    
+    if os.path.exists(json_path) and os.path.exists(md_path):
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                json_result = json.load(f)
+            with open(md_path, "r", encoding="utf-8") as f:
+                markdown_text = f.read()
+            
+            overall_dir = get_overall_image_dir(file_path, original_file_name)
+            overall_imgs: List[str] = []
+            if os.path.isdir(overall_dir):
+                for fname in sorted(os.listdir(overall_dir)):
+                    if fname.lower().endswith(".jpg"):
+                        overall_imgs.append(os.path.join(overall_dir, fname))
+            
+            return {
+                "json_result": json_result,
+                "markdown_text": markdown_text,
+                "raw_text": preview_file_content(file_path),
+                "overall_image_paths": overall_imgs,
+                "_cached": True,
+            }
+        except Exception as e:
+            print(f"加载新格式缓存失败: {e}")
+    
+    # 如果新格式缓存不存在，尝试查找旧格式的缓存
+    # 通过读取当前文件的前几页内容，与旧缓存文件的内容进行匹配
     try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            json_result = json.load(f)
-        with open(md_path, "r", encoding="utf-8") as f:
-            markdown_text = f.read()
+        # 读取当前文件的前1000个字符作为特征
+        current_content = preview_file_content(file_path)
+        if len(current_content) > 1000:
+            current_content = current_content[:1000]
         
-        return {
-            "json_result": json_result,
-            "markdown_text": markdown_text,
-            "raw_text": preview_file_content(file_path),
-            "_cached": True,
-        }
+        # 扫描所有旧格式的JSON文件（以tmp开头的）
+        jsons_dir = "jsons"
+        mds_dir = "mds"
+        if os.path.exists(jsons_dir) and os.path.exists(mds_dir):
+            json_files = glob.glob(os.path.join(jsons_dir, "tmp*.json"))
+            
+            for old_json_file in json_files:
+                try:
+                    # 读取旧缓存文件
+                    with open(old_json_file, "r", encoding="utf-8") as f:
+                        old_json_result = json.load(f)
+                    
+                    # 获取旧缓存的第一页文本内容
+                    old_pages = old_json_result.get("pages", [])
+                    if old_pages:
+                        old_first_page_text = old_pages[0].get("text", "")
+                        if len(old_first_page_text) > 1000:
+                            old_first_page_text = old_first_page_text[:1000]
+                        
+                        # 简单匹配：检查是否有足够的相似文本
+                        # 这里使用简单的包含关系，更复杂的匹配可以使用相似度算法
+                        common_chars = set(current_content) & set(old_first_page_text)
+                        if len(common_chars) > 50:  # 如果共同字符超过50个，认为可能是同一个文件
+                            # 找到对应的MD文件
+                            old_md_file = os.path.join(mds_dir, os.path.basename(old_json_file).replace(".json", ".md"))
+                            if os.path.exists(old_md_file):
+                                with open(old_md_file, "r", encoding="utf-8") as f:
+                                    old_markdown_text = f.read()
+                                
+                                print(f"通过内容匹配找到旧格式缓存: {os.path.basename(old_json_file)}")
+                                
+                                # 如果找到了匹配的旧缓存，可以尝试迁移到新格式
+                                if original_file_name:
+                                    try:
+                                        new_json_path, new_md_path = get_cache_file_paths(file_path, original_file_name)
+                                        # 复制到新格式
+                                        import shutil
+                                        shutil.copy2(old_json_file, new_json_path)
+                                        shutil.copy2(old_md_file, new_md_path)
+                                        print(f"已迁移缓存文件到新格式: {os.path.basename(new_json_path)}")
+                                        
+                                        # 重新加载新格式的缓存
+                                        with open(new_json_path, "r", encoding="utf-8") as f:
+                                            json_result = json.load(f)
+                                        with open(new_md_path, "r", encoding="utf-8") as f:
+                                            markdown_text = f.read()
+                                        
+                                        return {
+                                            "json_result": json_result,
+                                            "markdown_text": markdown_text,
+                                            "raw_text": preview_file_content(file_path),
+                                            "_cached": True,
+                                        }
+                                    except Exception as e:
+                                        print(f"迁移缓存文件失败: {e}")
+                                
+                                # 如果迁移失败，直接返回旧格式的缓存
+                                return {
+                                    "json_result": old_json_result,
+                                    "markdown_text": old_markdown_text,
+                                    "raw_text": preview_file_content(file_path),
+                                    "overall_image_paths": [],
+                                    "_cached": True,
+                                }
+                except Exception as e:
+                    print(f"检查旧缓存文件 {old_json_file} 时出错: {e}")
+                    continue
     except Exception as e:
-        print(f"加载缓存失败: {e}")
-        return None
+        print(f"查找旧格式缓存时出错: {e}")
+    
+    return None
 
 
-def save_parse_result(file_path: str, json_result: Dict[str, Any], markdown_text: str):
-    """保存解析结果到缓存文件"""
-    json_path, md_path = get_cache_file_paths(file_path)
+def save_parse_result(file_path: str, json_result: Dict[str, Any], markdown_text: str, original_file_name: Optional[str] = None):
+    """保存解析结果到缓存文件
+    
+    使用原始文件名（original_file_name）来命名缓存文件，便于与PDF对应。
+    如果没有提供原始文件名，则使用文件路径中的文件名。
+    """
+    json_path, md_path = get_cache_file_paths(file_path, original_file_name)
     
     # 确保目录存在
     os.makedirs("jsons", exist_ok=True)
@@ -827,8 +1092,62 @@ def save_parse_result(file_path: str, json_result: Dict[str, Any], markdown_text
         print(f"保存解析结果失败: {e}")
 
 
+def migrate_old_cache_files():
+    """迁移旧的缓存文件到新的命名格式
+    
+    扫描jsons和mds目录，查找使用旧命名格式（临时文件名）的缓存文件，
+    如果JSON文件中包含原始文件名信息，则尝试重命名。
+    注意：此函数需要用户手动调用，或者可以在启动时自动执行一次。
+    """
+    import glob
+    
+    jsons_dir = "jsons"
+    mds_dir = "mds"
+    
+    if not (os.path.exists(jsons_dir) and os.path.exists(mds_dir)):
+        return
+    
+    # 查找所有JSON文件
+    json_files = glob.glob(os.path.join(jsons_dir, "*.json"))
+    
+    migrated_count = 0
+    for json_file in json_files:
+        try:
+            # 读取JSON文件
+            with open(json_file, "r", encoding="utf-8") as f:
+                json_data = json.load(f)
+            
+            # 检查是否是旧格式（文件名以tmp开头）
+            old_file_name = os.path.basename(json_file)
+            if not old_file_name.startswith("tmp"):
+                continue  # 已经是新格式，跳过
+            
+            # 尝试从JSON中获取原始文件名
+            # 注意：旧格式的JSON中file_name可能是临时文件名，无法直接获取原始文件名
+            # 这里只是提供一个框架，实际迁移可能需要用户手动指定或通过其他方式识别
+            
+            # 检查是否有对应的MD文件
+            md_file = os.path.join(mds_dir, old_file_name.replace(".json", ".md"))
+            if not os.path.exists(md_file):
+                continue
+            
+            # 这里可以添加更多的识别逻辑，比如：
+            # 1. 从JSON内容中提取文档标题
+            # 2. 通过文件内容匹配来识别
+            # 3. 或者让用户手动指定
+            
+            print(f"发现旧格式缓存文件: {old_file_name}，需要手动迁移")
+            
+        except Exception as e:
+            print(f"处理文件 {json_file} 时出错: {e}")
+            continue
+    
+    if migrated_count > 0:
+        print(f"已迁移 {migrated_count} 个缓存文件")
+
+
 def format_json_result_as_text(json_result: Dict[str, Any]) -> str:
-    """将JSON结果格式化为可读文本，包含位置信息"""
+    """从JSON中提取文字、位置、排版等信息并格式化为可读文本"""
     if not json_result:
         return "暂无JSON结果"
     
@@ -859,64 +1178,128 @@ def format_json_result_as_text(json_result: Dict[str, Any]) -> str:
             if meta:
                 page_width = meta.get("page_width", 0)
                 page_height = meta.get("page_height", 0)
-                lines.append(f"   📏 页面尺寸: {page_width} × {page_height} 像素")
-                lines.append(f"   📐 页面类型: {meta.get('page_type', 'N/A')}")
+                lines.append(f"📏 页面尺寸: {page_width} × {page_height} 像素 | 页面类型: {meta.get('page_type', 'N/A')}")
                 lines.append("")
             
-            # 处理布局信息（layouts）
+            # 优先显示页面完整文本内容
+            page_text = page.get("text", "").strip()
+            if page_text:
+                lines.append("【识别文本内容】")
+                lines.append("-" * 80)
+                lines.append(page_text)
+                lines.append("")
+                lines.append("-" * 80)
+                lines.append("")
+            
+            # 处理布局信息（layouts）- 按顺序展示，包含位置和排版信息
             layouts = page.get("layouts", [])
             if layouts:
-                lines.append(f"   📋 布局元素 ({len(layouts)} 个):")
+                lines.append(f"【布局结构信息】共 {len(layouts)} 个布局元素")
                 lines.append("")
                 
                 # 按层级组织布局（先显示根节点，再显示子节点）
                 layout_dict = {layout.get("layout_id"): layout for layout in layouts}
                 root_layouts = [layout for layout in layouts if layout.get("parent") == "root"]
                 
-                def format_layout(layout, indent_level=2):
-                    """格式化单个布局元素"""
+                def format_layout_with_text(layout, indent_level=0):
+                    """格式化单个布局元素，突出显示文本和位置信息"""
                     indent = "  " * indent_level
                     layout_id = layout.get("layout_id", "N/A")
                     layout_type = layout.get("type", "N/A")
                     sub_type = layout.get("sub_type", "")
                     text = layout.get("text", "").strip()
                     position = layout.get("position", [])
-                    parent = layout.get("parent", "N/A")
-                    children = layout.get("children", [])
                     
-                    # 格式化位置信息
+                    # 格式化位置信息，并判断文本方向
+                    direction_hint = ""
                     if position and len(position) >= 4:
                         x, y, w, h = position[0], position[1], position[2], position[3]
-                        pos_str = f"位置: ({x}, {y}) 尺寸: {w}×{h}"
+                        # 根据宽高比判断文本方向
+                        if w > 0 and h > 0:
+                            aspect_ratio = w / h
+                            if aspect_ratio > 2.0:  # 宽度明显大于高度，水平文本
+                                direction_hint = " [水平]"
+                            elif aspect_ratio < 0.5:  # 高度明显大于宽度，垂直文本
+                                direction_hint = " [垂直]"
+                        pos_str = f"[位置: ({x}, {y}) 尺寸: {w}×{h}{direction_hint}]"
                     else:
-                        pos_str = "位置: N/A"
+                        pos_str = "[位置: N/A]"
                     
                     # 类型标签
                     type_label = f"{layout_type}"
                     if sub_type:
                         type_label += f"/{sub_type}"
                     
-                    # 构建显示内容
+                    # 构建显示内容 - 优先显示文本内容
                     result = []
-                    result.append(f"{indent}┌─ [{type_label}] {layout_id}")
-                    result.append(f"{indent}│  {pos_str}")
                     if text:
-                        # 限制文本长度，避免过长
-                        text_preview = text.replace("\n", "\\n")[:100]
-                        if len(text) > 100:
-                            text_preview += "..."
-                        result.append(f"{indent}│  文本: {text_preview}")
-                    if parent != "root":
-                        result.append(f"{indent}│  父节点: {parent}")
-                    if children:
-                        result.append(f"{indent}│  子节点: {', '.join(children)}")
-                    result.append(f"{indent}└─")
+                        # 根据位置尺寸判断文本方向，决定如何显示文本
+                        text_to_display = text
+                        if position and len(position) >= 4:
+                            x, y, w, h = position[0], position[1], position[2], position[3]
+                            if w > 0 and h > 0:
+                                aspect_ratio = w / h
+                                text_lines = text.split("\n")
+                                # 检查是否是每行一个字符的垂直排列（可能是水平文本被错误分割）
+                                is_single_char_per_line = all(len(line.strip()) == 1 for line in text_lines if line.strip())
+                                
+                                # 如果宽度大于高度，且文本是每行一个字符，说明是水平文本被错误分割
+                                # 应该合并为一行显示
+                                if aspect_ratio > 1.2 and is_single_char_per_line:
+                                    # 合并为水平文本
+                                    text_to_display = "".join(line.strip() for line in text_lines if line.strip())
+                                    result.append(f"{indent}【{type_label}】{pos_str}")
+                                    result.append(f"{indent}  文本（水平）: {text_to_display}")
+                                elif aspect_ratio < 0.8:
+                                    # 高度大于宽度，可能是垂直文本
+                                    result.append(f"{indent}【{type_label}】{pos_str}")
+                                    result.append(f"{indent}  文本（垂直排列）:")
+                                    for line in text_lines:
+                                        if line.strip():
+                                            result.append(f"{indent}    {line}")
+                                else:
+                                    # 其他情况，按原始格式显示
+                                    if len(text_lines) == 1:
+                                        result.append(f"{indent}【{type_label}】{pos_str}")
+                                        result.append(f"{indent}  文本: {text_to_display}")
+                                    else:
+                                        result.append(f"{indent}【{type_label}】{pos_str}")
+                                        result.append(f"{indent}  文本:")
+                                        for line in text_lines:
+                                            if line.strip():
+                                                result.append(f"{indent}    {line}")
+                            else:
+                                # 没有有效的尺寸信息，按原始格式显示
+                                text_lines = text_to_display.split("\n")
+                                if len(text_lines) == 1:
+                                    result.append(f"{indent}【{type_label}】{pos_str}")
+                                    result.append(f"{indent}  文本: {text_to_display}")
+                                else:
+                                    result.append(f"{indent}【{type_label}】{pos_str}")
+                                    result.append(f"{indent}  文本:")
+                                    for line in text_lines:
+                                        if line.strip():
+                                            result.append(f"{indent}    {line}")
+                        else:
+                            # 没有位置信息，按原始格式显示
+                            text_lines = text_to_display.split("\n")
+                            if len(text_lines) == 1:
+                                result.append(f"{indent}【{type_label}】{pos_str}")
+                                result.append(f"{indent}  文本: {text_to_display}")
+                            else:
+                                result.append(f"{indent}【{type_label}】{pos_str}")
+                                result.append(f"{indent}  文本:")
+                                for line in text_lines:
+                                    if line.strip():
+                                        result.append(f"{indent}    {line}")
+                    else:
+                        result.append(f"{indent}【{type_label}】{layout_id} {pos_str}")
                     
                     return result
                 
-                # 递归处理布局树
-                def process_layout_tree(layout, indent_level=2, processed=None):
-                    """递归处理布局树结构"""
+                # 递归处理布局树，按顺序展示
+                def process_layout_tree_ordered(layout, indent_level=0, processed=None):
+                    """递归处理布局树结构，按顺序展示文本内容"""
                     if processed is None:
                         processed = set()
                     
@@ -925,7 +1308,7 @@ def format_json_result_as_text(json_result: Dict[str, Any]) -> str:
                         return []
                     
                     processed.add(layout_id)
-                    result = format_layout(layout, indent_level)
+                    result = format_layout_with_text(layout, indent_level)
                     
                     # 处理子节点
                     children_ids = layout.get("children", [])
@@ -933,7 +1316,7 @@ def format_json_result_as_text(json_result: Dict[str, Any]) -> str:
                         for child_id in children_ids:
                             if child_id in layout_dict:
                                 child_layout = layout_dict[child_id]
-                                child_result = process_layout_tree(child_layout, indent_level + 1, processed)
+                                child_result = process_layout_tree_ordered(child_layout, indent_level + 1, processed)
                                 result.extend(child_result)
                     
                     return result
@@ -941,7 +1324,7 @@ def format_json_result_as_text(json_result: Dict[str, Any]) -> str:
                 # 处理所有根布局（parent为"root"的布局）
                 processed_ids = set()
                 for root_layout in root_layouts:
-                    layout_lines = process_layout_tree(root_layout, indent_level=2, processed=processed_ids)
+                    layout_lines = process_layout_tree_ordered(root_layout, indent_level=0, processed=processed_ids)
                     lines.extend(layout_lines)
                     lines.append("")
                 
@@ -949,34 +1332,34 @@ def format_json_result_as_text(json_result: Dict[str, Any]) -> str:
                 orphan_layouts = [layout for layout in layouts 
                                  if layout.get("layout_id") not in processed_ids]
                 if orphan_layouts:
-                    lines.append("   ⚠️  其他布局元素:")
+                    lines.append("【其他布局元素】")
                     for orphan in orphan_layouts:
-                        layout_lines = format_layout(orphan, indent_level=2)
+                        layout_lines = format_layout_with_text(orphan, indent_level=0)
                         lines.extend(layout_lines)
                         lines.append("")
             
             # 处理表格
             tables = page.get("tables", [])
             if tables:
-                lines.append(f"   📊 表格 ({len(tables)} 个):")
+                lines.append(f"【表格信息】共 {len(tables)} 个表格")
                 for i, table in enumerate(tables):
-                    lines.append(f"      [{i+1}] 表格ID: {table.get('table_id', 'N/A')}")
+                    lines.append(f"  表格 {i+1}: ID={table.get('table_id', 'N/A')}")
                     if "position" in table:
                         pos = table["position"]
                         if len(pos) >= 4:
-                            lines.append(f"          位置: ({pos[0]}, {pos[1]}) 尺寸: {pos[2]}×{pos[3]}")
+                            lines.append(f"    位置: ({pos[0]}, {pos[1]}) 尺寸: {pos[2]}×{pos[3]}")
                 lines.append("")
             
             # 处理图片
             images = page.get("images", [])
             if images:
-                lines.append(f"   🖼️  图片 ({len(images)} 个):")
+                lines.append(f"【图片信息】共 {len(images)} 个图片")
                 for i, image in enumerate(images):
-                    lines.append(f"      [{i+1}] 图片ID: {image.get('image_id', 'N/A')}")
+                    lines.append(f"  图片 {i+1}: ID={image.get('image_id', 'N/A')}")
                     if "position" in image:
                         pos = image["position"]
                         if len(pos) >= 4:
-                            lines.append(f"          位置: ({pos[0]}, {pos[1]}) 尺寸: {pos[2]}×{pos[3]}")
+                            lines.append(f"    位置: ({pos[0]}, {pos[1]}) 尺寸: {pos[2]}×{pos[3]}")
                 lines.append("")
             
             lines.append("")
@@ -987,221 +1370,100 @@ def format_json_result_as_text(json_result: Dict[str, Any]) -> str:
 
 
 def call_online_parse_api(file_path: str) -> Optional[Dict[str, Any]]:
-    """调用百度文档解析在线API，并返回解析文本/JSON/下载链接。"""
-    # 先检查缓存
-    cached_result = load_cached_parse_result(file_path)
+    """调用布局解析在线API（基于test_ppsv3.py），并返回markdown、原始JSON与整体OCR图路径。"""
+    # 先检查缓存（使用原始文件名）
+    original_file_name = st.session_state.get("file_name")
+    cached_result = load_cached_parse_result(file_path, original_file_name)
     if cached_result:
         print(f"从缓存加载解析结果: {file_path}")
+        # 兼容：尝试补充已下载的overall图片列表（若存在）
+        overall_dir = get_overall_image_dir(file_path, original_file_name)
+        overall_imgs = []
+        if os.path.isdir(overall_dir):
+            for fname in sorted(os.listdir(overall_dir)):
+                if fname.lower().endswith(".jpg"):
+                    overall_imgs.append(os.path.join(overall_dir, fname))
+        cached_result["overall_image_paths"] = overall_imgs
         return cached_result
     
     try:
-        create_url = "https://aip.baidubce.com/rest/2.0/brain/online/v2/parser/task"
-        query_url = (
-            "https://aip.baidubce.com/rest/2.0/brain/online/v2/parser/task/query"
-        )
+        # 与 test_ppsv3.py 对齐的API
+        API_URL = "https://uft8mbk5g3ndv3m1.aistudio-app.com/layout-parsing"
+        TOKEN = "6f83207f504098cd644f75618f9ed9507a5dfa7b"
 
-        params = {
-            "file_data": _read_file_as_base64(file_path) or "",
-            "file_name": os.path.basename(file_path),
-            "recognize_formula": "True",
-            "analysis_chart": "True",
-            "angle_adjust": "True",
-            "parse_image_layout": "True",
-            "language_type": "CHN_ENG",
-            "switch_digital_width": "auto",
-        }
-        payload = urllib.parse.urlencode(params)
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-            "Authorization": "Bearer bce-v3/ALTAK-IS6uG1qXcgDDP9RrmjYD9/ede55d516092e0ca5e9041eab19455df12c7db7f",
+        with open(file_path, "rb") as file:
+            file_bytes = file.read()
+            file_data = base64.b64encode(file_bytes).decode("ascii")
+
+        headers = {"Authorization": f"token {TOKEN}", "Content-Type": "application/json"}
+        payload = {
+            "file": file_data,
+            "fileType": 0,
+            "useDocOrientationClassify": False,
+            "useDocUnwarping": False,
+            "useTextlineOrientation": False,
+            "useChartRecognition": False,
         }
 
-        # 添加重试机制和超时设置
-        max_retries = 3
-        retry_delay = 2  # 秒
-        resp = None
-        data = {}
-        
-        for attempt in range(max_retries):
-            try:
-                # 根据文件大小动态设置超时时间（大文件需要更长时间）
-                file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
-                # 基础超时30秒，大文件（>5MB）增加到60秒
-                timeout = 60 if file_size > 5 * 1024 * 1024 else 30
-                
-                resp = requests.post(
-                    create_url, 
-                    headers=headers, 
-                    data=payload.encode("utf-8"),
-                    timeout=timeout,
-                    verify=True  # 启用SSL验证
-                )
-                resp.raise_for_status()  # 检查HTTP错误
-                
-                data = (
-                    resp.json()
-                    if resp.headers.get("content-type", "").startswith("application/json")
-                    else {}
-                )
-                break  # 成功则退出重试循环
-                
-            except requests.exceptions.SSLError as e:
-                if attempt < max_retries - 1:
-                    print(f"SSL错误，第{attempt + 1}次重试... 错误: {str(e)}")
-                    time.sleep(retry_delay * (attempt + 1))  # 指数退避
-                else:
-                    # 最后一次尝试，如果还是SSL错误，尝试禁用SSL验证（不推荐但作为备选）
-                    try:
-                        print("最后一次尝试，临时禁用SSL验证（仅用于解决SSL连接问题）...")
-                        st.warning("⚠️ 检测到SSL连接问题，正在尝试备用连接方式...")
-                        resp = requests.post(
-                            create_url, 
-                            headers=headers, 
-                            data=payload.encode("utf-8"),
-                            timeout=timeout,
-                            verify=False  # 临时禁用SSL验证
-                        )
-                        resp.raise_for_status()
-                        data = (
-                            resp.json()
-                            if resp.headers.get("content-type", "").startswith("application/json")
-                            else {}
-                        )
-                        st.info("✅ 已通过备用方式连接成功")
-                        break
-                    except Exception as e2:
-                        st.error(f"调用在线解析API失败（SSL错误）: {str(e2)}")
-                        st.info("💡 建议：检查网络连接或稍后重试。如果问题持续，可能是服务器端SSL配置问题。")
-                        print(f"详细错误信息: {type(e2).__name__}: {str(e2)}")
-                        return None
-                        
-            except requests.exceptions.Timeout as e:
-                if attempt < max_retries - 1:
-                    print(f"请求超时，第{attempt + 1}次重试...")
-                    time.sleep(retry_delay * (attempt + 1))
-                else:
-                    st.error(f"请求超时: 文件可能过大，请稍后重试")
-                    return None
-                    
-            except requests.exceptions.RequestException as e:
-                if attempt < max_retries - 1:
-                    print(f"请求错误，第{attempt + 1}次重试... 错误: {str(e)}")
-                    time.sleep(retry_delay * (attempt + 1))
-                else:
-                    st.error(f"调用在线解析API失败: {str(e)}")
-                    print(f"详细错误信息: {type(e).__name__}: {str(e)}")
-                    return None
-        
-        if not resp:
-            st.error("创建在线解析任务失败：无法连接到服务器")
+        # 请求接口
+        resp = requests.post(API_URL, json=payload, headers=headers, timeout=120)
+        if resp.status_code != 200:
+            st.error(f"在线解析失败，状态码: {resp.status_code}")
             return None
-            
-        task_id = (
-            (data.get("result", {}) or {}).get("task_id")
-            if isinstance(data, dict)
-            else None
-        )
-        if not task_id:
-            error_msg = data.get("error_msg", "未知错误")
-            st.error(f"创建在线解析任务失败: {error_msg}")
-            return None
+        api_json = resp.json()
+        result = api_json.get("result", {})
 
-        # 轮询查询任务状态
-        max_query_retries = 30
-        interval = 2
-        result_json: Optional[Dict[str, Any]] = None
-        query_headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-            "Authorization": "Bearer bce-v3/ALTAK-IS6uG1qXcgDDP9RrmjYD9/ede55d516092e0ca5e9041eab19455df12c7db7f",
-        }
-        
-        for i in range(max_query_retries):
-            try:
-                q = requests.post(
-                    query_url,
-                    headers=query_headers,
-                    data=f"task_id={task_id}".encode("utf-8"),
-                    timeout=30,
-                    verify=True
-                )
-                q.raise_for_status()
+        # 组织markdown：把各part的markdown拼接为一个文档
+        layout_results = result.get("layoutParsingResults", []) or []
+        merged_markdown_parts: List[str] = []
+        overall_image_paths: List[str] = []
+
+        # 仅保留 overall_ocr_res 图片，保存到指定目录并按文件名区分
+        overall_dir = get_overall_image_dir(file_path, original_file_name)
+        os.makedirs(overall_dir, exist_ok=True)
+        # 清理旧图片
+        for fname in os.listdir(overall_dir):
+            if fname.lower().endswith(".jpg"):
                 try:
-                    result_json = q.json()
-                except Exception:
-                    result_json = None
-                status = (result_json or {}).get("result", {}).get("status")
-                if status == "success":
-                    break
-                if status in ("failed", "error"):
-                    error_msg = (result_json or {}).get("result", {}).get("task_error", "未知错误")
-                    st.warning(f"任务处理失败: {error_msg}")
-                    break
-            except requests.exceptions.RequestException as e:
-                if i < max_query_retries - 1:
-                    print(f"查询任务状态失败，重试中... ({i+1}/{max_query_retries})")
-                else:
-                    st.error(f"查询任务状态失败: {str(e)}")
-                    return None
-            time.sleep(interval)
+                    os.remove(os.path.join(overall_dir, fname))
+                except OSError:
+                    pass
 
-        if not result_json:
-            st.error("在线解析任务无返回")
-            return None
+        for i, res in enumerate(layout_results):
+            md_text = ((res.get("markdown") or {}).get("text")) or ""
+            if md_text:
+                merged_markdown_parts.append(md_text)
 
-        r = result_json.get("result", {}) if isinstance(result_json, dict) else {}
-        parse_result_url = r.get("parse_result_url")
-        markdown_url = r.get("markdown_url")
+            # 下载 overall_ocr_res
+            output_images = res.get("outputImages") or {}
+            for img_name, img_url in output_images.items():
+                if not isinstance(img_url, str):
+                    continue
+                if "overall_ocr_res" not in img_name.lower():
+                    continue
+                try:
+                    img_response = requests.get(img_url, timeout=120)
+                    if img_response.status_code == 200:
+                        filename = os.path.join(overall_dir, f"{img_name}_{i}.jpg")
+                        with open(filename, "wb") as f:
+                            f.write(img_response.content)
+                        overall_image_paths.append(filename)
+                except Exception as _:
+                    continue
 
-        json_result: Dict[str, Any] = {}
-        markdown_text: Optional[str] = None
-        try:
-            if parse_result_url:
-                jr = requests.get(parse_result_url, timeout=30, verify=True)
-                jr.raise_for_status()
-                # 显式设置编码为UTF-8，避免中文乱码
-                jr.encoding = 'utf-8'
-                json_result = jr.json() if jr.ok else {}
-        except requests.exceptions.RequestException as e:
-            print(f"下载JSON结果失败: {str(e)}")
-            json_result = {}
-        try:
-            if markdown_url:
-                mr = requests.get(markdown_url, timeout=30, verify=True)
-                mr.raise_for_status()
-                # 显式设置编码为UTF-8，避免中文乱码
-                mr.encoding = 'utf-8'
-                markdown_text = mr.text if mr.ok else None
-        except requests.exceptions.RequestException as e:
-            print(f"下载Markdown结果失败: {str(e)}")
-            markdown_text = None
+        markdown_text = "\n\n---\n\n".join(merged_markdown_parts) if merged_markdown_parts else ""
+        json_result = result  # 原格式JSON
 
-        # 保存到缓存
+        # 缓存：仅保存 md 与 原格式 json
         if json_result and markdown_text:
-            save_parse_result(file_path, json_result, markdown_text)
+            save_parse_result(file_path, json_result, markdown_text, original_file_name)
 
         result_payload = {
-            "task_id": task_id,
-            "parse_result_url": parse_result_url,
-            "markdown_url": markdown_url,
             "json_result": json_result,
             "markdown_text": markdown_text,
-            # 回退的原始文本
+            "overall_image_paths": overall_image_paths,
             "raw_text": preview_file_content(file_path),
-            # 额外暴露一次核心 API 返回，便于打印/调试
-            "_api_create_resp": data,
-            "_api_query_resp": result_json,
         }
-
-        # 打印到控制台（开发期需求）
-        print(
-            "[call_online_parse_api] create_resp:", json.dumps(data, ensure_ascii=False)
-        )
-        print(
-            "[call_online_parse_api] query_resp:",
-            json.dumps(result_json or {}, ensure_ascii=False),
-        )
 
         return result_payload
     except Exception as e:
@@ -1416,6 +1678,7 @@ def process_contract_workflow(file_path: str):
 
         st.session_state.workflow_result = result
         st.session_state.processing_status = "completed"
+        st.session_state.view_mode = "analysis"
 
         st.success("合同分析完成！")
 
@@ -1452,6 +1715,9 @@ def main():
                     st.session_state.workflow_result = None
                     st.session_state.processing_status = "idle"
                     st.session_state.loaded_from_history = False
+                    st.session_state.view_mode = "preview"
+                    # 不清空OCR解析结果，让render_preview_panel自动检查并加载缓存
+                    # 如果新文件有缓存会自动加载，没有缓存会自动清空
 
                     st.session_state.saved_file_path = saved_path
                     st.session_state.file_name = uploaded_file.name
@@ -1470,6 +1736,9 @@ def main():
                             st.session_state.workflow_result = None
                             st.session_state.processing_status = "idle"
                             st.session_state.loaded_from_history = False
+                            st.session_state.view_mode = "preview"
+                            # 不清空OCR解析结果，让render_preview_panel自动检查并加载缓存
+                            # 如果新文件有缓存会自动加载，没有缓存会自动清空
 
                             st.session_state.saved_file_path = temp_path
                             st.session_state.file_name = file_name
@@ -1507,6 +1776,7 @@ def main():
                 st.session_state.workflow_result = cached
                 st.session_state.processing_status = "completed"
                 st.session_state.loaded_from_history = True
+                st.session_state.view_mode = "analysis"
                 st.success("已加载历史最新分析结果")
 
         # 操作按钮：idle 显示“开始分析”；completed 显示“重新提交模型分析”
@@ -1527,6 +1797,7 @@ def main():
         if (
             st.session_state.processing_status == "completed"
             and st.session_state.workflow_result
+            and st.session_state.get("view_mode") == "analysis"
         ):
             result = st.session_state.workflow_result
             risk_analysis = result.get("risk_analysis", {})
@@ -1691,15 +1962,27 @@ def main():
                     width='stretch',
                 )
 
+                if st.button("⬅️ 返回预览界面", use_container_width=True):
+                    st.session_state.view_mode = "preview"
+                    st.rerun()
+
         # 显示文件预览（重构为左右对照布局）
         if (
-            st.session_state.processing_status == "idle"
-            and st.session_state.preview_content
+            st.session_state.preview_content
+            and st.session_state.get("view_mode") == "preview"
         ):
             st.markdown("### 👀 文件预览与识别对照")
             render_preview_panel(
                 st.session_state.saved_file_path, st.session_state.preview_content
             )
+
+            if (
+                st.session_state.workflow_result
+                and st.session_state.processing_status == "completed"
+            ):
+                if st.button("📊 查看分析结果", use_container_width=True):
+                    st.session_state.view_mode = "analysis"
+                    st.rerun()
 
     else:
         st.info("请上传合同文件或选择样例文件开始分析")
