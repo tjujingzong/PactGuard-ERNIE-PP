@@ -861,72 +861,7 @@ def render_preview_panel(file_path: str, preview_text: str):
                     markdown_content = st.session_state.ocr_parse_result.get("markdown_text")
                 
                 if markdown_content:
-                    # 将Markdown转换为HTML并放入自定义滚动容器，确保可复制
-                    try:
-                        import markdown as md_lib
-
-                        html_body = md_lib.markdown(
-                            markdown_content,
-                            extensions=["extra", "codehilite", "tables", "fenced_code"],
-                        )
-                    except Exception:
-                        import html as html_escape
-
-                        escaped = html_escape.escape(markdown_content)
-                        html_body = escaped.replace("\n", "<br>")
-                    
-                    markdown_html = f"""
-                    <style>
-                    .md-preview-box {{
-                        max-height: 780px;
-                        overflow-y: auto;
-                        overflow-x: auto;
-                        padding: 16px;
-                        border: 1px solid #dee2e6;
-                        border-radius: 8px;
-                        background-color: #fff;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                    }}
-                    .md-preview-box *,
-                    .md-preview-box {{
-                        user-select: text !important;
-                        -webkit-user-select: text !important;
-                        -moz-user-select: text !important;
-                        -ms-user-select: text !important;
-                        cursor: text !important;
-                    }}
-                    .md-preview-box pre {{
-                        background: #f6f8fa;
-                        padding: 12px;
-                        border-radius: 6px;
-                        overflow-x: auto;
-                    }}
-                    .md-preview-box code {{
-                        background: #f6f8fa;
-                        padding: 2px 4px;
-                        border-radius: 4px;
-                        font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
-                    }}
-                    .md-preview-box table {{
-                        border-collapse: collapse;
-                        width: 100%;
-                        margin: 1em 0;
-                    }}
-                    .md-preview-box table th,
-                    .md-preview-box table td {{
-                        border: 1px solid #dee2e6;
-                        padding: 8px 12px;
-                        text-align: left;
-                    }}
-                    .md-preview-box table th {{
-                        background-color: #f2f4f7;
-                        font-weight: 600;
-                    }}
-                    </style>
-                    <div class="md-preview-box">{html_body}</div>
-                    """
-                    st.components.v1.html(markdown_html, height=820, scrolling=True)
+                    render_markdown_box(markdown_content, height=820)
                 else:
                     # 调用OCR解析之前显示为空
                     st.text_area(
@@ -1554,6 +1489,64 @@ def add_highlights_to_text(text: str, issues: List[Dict]) -> str:
     return highlighted_text
 
 
+def annotate_markdown_with_positions(markdown_text: str, issues: List[Dict]) -> str:
+    """基于位置索引在Markdown中标注风险点。
+    要求issues中包含“开始索引/结束索引”或“start_index/end_index”，索引基于原始markdown_text。
+    使用HTML <mark> 包裹，便于在Markdown渲染中保留样式。
+    """
+    if not markdown_text or not issues:
+        return markdown_text
+
+    ranges = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        start = issue.get("开始索引")
+        end = issue.get("结束索引")
+        # 兼容英文字段
+        if start is None:
+            start = issue.get("start_index")
+        if end is None:
+            end = issue.get("end_index")
+        if isinstance(start, int) and isinstance(end, int) and 0 <= start < end <= len(markdown_text):
+            risk_level = issue.get("风险等级", "低")
+            ranges.append((start, end, risk_level))
+
+    if not ranges:
+        return markdown_text
+
+    # 按开始位置排序，避免嵌套错位
+    ranges.sort(key=lambda x: x[0])
+
+    # 逐段拼接，插入标记
+    pieces = []
+    cursor = 0
+    for start, end, level in ranges:
+        # 跳过与已插入产生重叠的无效区间
+        if start < cursor:
+            continue
+        # 追加未标注部分
+        pieces.append(markdown_text[cursor:start])
+        snippet = markdown_text[start:end]
+        # 不同风险等级使用不同高亮色
+        if level == "高":
+            style = "background-color:#fde2e2;color:#b71c1c;padding:0 2px;border-radius:2px;"
+            label = "🔴重大风险"
+        elif level == "中":
+            style = "background-color:#fff3cd;color:#8a6d3b;padding:0 2px;border-radius:2px;"
+            label = "🟡一般风险"
+        else:
+            style = "background-color:#e8f5e9;color:#1b5e20;padding:0 2px;border-radius:2px;"
+            label = "🟢低风险"
+        wrapped = f'<mark style="{style}" title="{label}">{snippet}</mark>'
+        pieces.append(wrapped)
+        cursor = end
+
+    # 追加剩余部分
+    pieces.append(markdown_text[cursor:])
+    return "".join(pieces)
+
+
 def filter_issues_by_risk(issues: List[Dict], risk_level: str) -> List[Dict]:
     """根据风险等级筛选问题"""
     if risk_level == "全部":
@@ -1723,8 +1716,13 @@ def process_contract_workflow(file_path: str):
 
         # 步骤1: 文档解析/分析
         with st.spinner("正在解析文档并分析..."):
+            md_for_analysis = None
+            if st.session_state.get("ocr_parse_result") and isinstance(st.session_state.ocr_parse_result, dict):
+                _md = st.session_state.ocr_parse_result.get("markdown_text")
+                if isinstance(_md, str) and _md.strip():
+                    md_for_analysis = _md
             result = workflow.process_contract(
-                file_path, original_file_name=st.session_state.file_name
+                file_path, original_file_name=st.session_state.file_name, markdown_text=md_for_analysis
             )
 
         if "error" in result:
@@ -1741,6 +1739,132 @@ def process_contract_workflow(file_path: str):
     except Exception as e:
         st.session_state.processing_status = "error"
         st.error(f"处理过程中发生错误: {str(e)}")
+
+
+def render_markdown_box(markdown_text: str, height: int = 780):
+    """将Markdown内容渲染在带滚动条的框中，支持复制。"""
+    if not markdown_text:
+        st.info("暂无内容")
+        return
+
+    try:
+        import markdown as md_lib
+
+        html_body = md_lib.markdown(
+            markdown_text,
+            extensions=["extra", "codehilite", "tables", "fenced_code"],
+        )
+    except Exception:
+        import html as html_escape
+
+        escaped = html_escape.escape(markdown_text)
+        html_body = escaped.replace("\n", "<br>")
+
+    html_template = f"""
+    <style>
+    .md-preview-box {{
+        max-height: {height - 40}px;
+        overflow-y: auto;
+        overflow-x: auto;
+        padding: 16px;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        background-color: #fff;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }}
+    .md-preview-box *,
+    .md-preview-box {{
+        user-select: text !important;
+        -webkit-user-select: text !important;
+        -moz-user-select: text !important;
+        -ms-user-select: text !important;
+        cursor: text !important;
+    }}
+    .md-preview-box pre {{
+        background: #f6f8fa;
+        padding: 12px;
+        border-radius: 6px;
+        overflow-x: auto;
+    }}
+    .md-preview-box code {{
+        background: #f6f8fa;
+        padding: 2px 4px;
+        border-radius: 4px;
+        font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }}
+    .md-preview-box table {{
+        border-collapse: collapse;
+        width: 100%;
+        margin: 1em 0;
+    }}
+    .md-preview-box table th,
+    .md-preview-box table td {{
+        border: 1px solid #dee2e6;
+        padding: 8px 12px;
+        text-align: left;
+    }}
+    .md-preview-box table th {{
+        background-color: #f2f4f7;
+        font-weight: 600;
+    }}
+    </style>
+    <div class="md-preview-box">{html_body}</div>
+    """
+
+    st.components.v1.html(
+        html_template,
+        height=height,
+        scrolling=True,
+    )
+
+
+def _extract_markdown_string(data: Any) -> str:
+    """尽量从多种结构中提取markdown/纯文本，并把 \n 转换为真实换行。"""
+    def _from_obj(obj: Any) -> Optional[str]:
+        if obj is None:
+            return None
+        # 直接是字符串
+        if isinstance(obj, str):
+            s = obj
+            # 如果是JSON串，尝试解析
+            if s.strip().startswith("{") or s.strip().startswith("["):
+                try:
+                    parsed = json.loads(s)
+                    return _from_obj(parsed)
+                except Exception:
+                    pass
+            # 处理转义换行
+            return s.replace("\r\n", "\n").replace("\n", "\n")
+        # 字典结构
+        if isinstance(obj, dict):
+            # 优先取markdown
+            if isinstance(obj.get("markdown_text"), str):
+                return obj.get("markdown_text")
+            # 常见嵌套 content.text
+            content = obj.get("content")
+            if isinstance(content, dict) and isinstance(content.get("text"), str):
+                return content.get("text")
+            # 兜底 text 字段
+            if isinstance(obj.get("text"), str):
+                return obj.get("text")
+        # 列表：拼接
+        if isinstance(obj, list):
+            parts = []
+            for item in obj:
+                v = _from_obj(item)
+                if v:
+                    parts.append(v)
+            if parts:
+                return "\n\n".join(parts)
+        return None
+
+    extracted = _from_obj(data)
+    if not extracted:
+        return ""
+    # 将字符串中可能存在的转义换行统一处理
+    normalized = extracted.replace("\r\n", "\n").replace("\\n", "\n")
+    return normalized
 
 
 def main():
@@ -1872,18 +1996,46 @@ def main():
                 # 显示合同内容（带高亮）
                 document_text = result.get("document_text", "")
                 if document_text:
-                    # 为问题添加高亮标记
-                    highlighted_text = add_highlights_to_text(document_text, all_issues)
+                    # 优先使用OCR解析得到的markdown文本，以获得更好的排版
+                    markdown_source = None
+                    if st.session_state.get("ocr_parse_result") and isinstance(
+                        st.session_state.ocr_parse_result, dict
+                    ):
+                        markdown_from_preview = st.session_state.ocr_parse_result.get("markdown_text")
+                        if isinstance(markdown_from_preview, str) and markdown_from_preview.strip():
+                            markdown_source = markdown_from_preview
+                    # 没有OCR markdown时，从document_text中尽量提取纯文本/markdown
+                    if not markdown_source:
+                        markdown_source = _extract_markdown_string(document_text)
 
-                    # 显示标记后的文本
-                    st.markdown("### 📄 合同内容（已标记问题）")
-                    st.text_area(
-                        "合同内容（已标记）",
-                        value=highlighted_text,
-                        height=800,
-                        disabled=True,
-                        label_visibility="collapsed",
+                    # 优先使用位置索引进行MD标注；若无索引则回退到关键词替换式标注
+                    has_position = any(
+                        isinstance(issue, dict)
+                        and (
+                            isinstance(issue.get("开始索引"), int) and isinstance(issue.get("结束索引"), int)
+                            or isinstance(issue.get("start_index"), int) and isinstance(issue.get("end_index"), int)
+                        )
+                        for issue in all_issues
                     )
+                    if has_position:
+                        highlighted_text = annotate_markdown_with_positions(markdown_source, all_issues)
+                    else:
+                        highlighted_text = add_highlights_to_text(markdown_source, all_issues)
+
+                    # 另存标注后的Markdown
+                    try:
+                        json_path, md_path = get_cache_file_paths(result.get("file_path", ""), result.get("original_file_name"))
+                        os.makedirs(os.path.dirname(md_path), exist_ok=True)
+                        annotated_path = md_path[:-3] + ".annotated.md" if md_path.endswith(".md") else (md_path + ".annotated.md")
+                        with open(annotated_path, "w", encoding="utf-8") as f:
+                            f.write(highlighted_text)
+                        st.caption(f"已保存标注Markdown：{annotated_path}")
+                    except Exception as _save_exc:
+                        st.warning(f"保存标注Markdown失败：{_save_exc}")
+
+                    # 显示在可滚动Markdown容器中
+                    st.markdown("### 📄 合同内容（已标记问题）")
+                    render_markdown_box(highlighted_text, height=840)
                 else:
                     st.warning("未获取到文档内容")
 
