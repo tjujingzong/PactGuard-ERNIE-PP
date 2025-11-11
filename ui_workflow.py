@@ -861,32 +861,79 @@ def render_preview_panel(file_path: str, preview_text: str):
                     markdown_content = st.session_state.ocr_parse_result.get("markdown_text")
                 
                 if markdown_content:
-                    # 使用固定高度的容器确保可滚动，使用Streamlit的markdown渲染
-                    st.markdown(
-                        """
-                        <style>
-                        .markdown-scroll-container {
-                            max-height: 780px;
-                            overflow-y: auto;
-                            overflow-x: auto;
-                            padding: 10px;
-                            border: 1px solid #e0e0e0;
-                            border-radius: 4px;
-                            background-color: #fafafa;
-                        }
-                        </style>
-                        """,
-                        unsafe_allow_html=True
-                    )
-                    # 使用Streamlit的markdown渲染
-                    st.markdown(markdown_content)
+                    # 将Markdown转换为HTML并放入自定义滚动容器，确保可复制
+                    try:
+                        import markdown as md_lib
+
+                        html_body = md_lib.markdown(
+                            markdown_content,
+                            extensions=["extra", "codehilite", "tables", "fenced_code"],
+                        )
+                    except Exception:
+                        import html as html_escape
+
+                        escaped = html_escape.escape(markdown_content)
+                        html_body = escaped.replace("\n", "<br>")
+                    
+                    markdown_html = f"""
+                    <style>
+                    .md-preview-box {{
+                        max-height: 780px;
+                        overflow-y: auto;
+                        overflow-x: auto;
+                        padding: 16px;
+                        border: 1px solid #dee2e6;
+                        border-radius: 8px;
+                        background-color: #fff;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                    }}
+                    .md-preview-box *,
+                    .md-preview-box {{
+                        user-select: text !important;
+                        -webkit-user-select: text !important;
+                        -moz-user-select: text !important;
+                        -ms-user-select: text !important;
+                        cursor: text !important;
+                    }}
+                    .md-preview-box pre {{
+                        background: #f6f8fa;
+                        padding: 12px;
+                        border-radius: 6px;
+                        overflow-x: auto;
+                    }}
+                    .md-preview-box code {{
+                        background: #f6f8fa;
+                        padding: 2px 4px;
+                        border-radius: 4px;
+                        font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+                    }}
+                    .md-preview-box table {{
+                        border-collapse: collapse;
+                        width: 100%;
+                        margin: 1em 0;
+                    }}
+                    .md-preview-box table th,
+                    .md-preview-box table td {{
+                        border: 1px solid #dee2e6;
+                        padding: 8px 12px;
+                        text-align: left;
+                    }}
+                    .md-preview-box table th {{
+                        background-color: #f2f4f7;
+                        font-weight: 600;
+                    }}
+                    </style>
+                    <div class="md-preview-box">{html_body}</div>
+                    """
+                    st.components.v1.html(markdown_html, height=820, scrolling=True)
                 else:
                     # 调用OCR解析之前显示为空
                     st.text_area(
                         "Markdown内容",
                         "",
                         height=780,
-                        disabled=True,
+                        disabled=False,
                         label_visibility="collapsed",
                         key="markdown_preview_area"
                     )
@@ -899,7 +946,16 @@ def render_preview_panel(file_path: str, preview_text: str):
                 ):
                     json_result = st.session_state.ocr_parse_result.get("json_result", {})
                     if json_result:
-                        st.json(json_result)
+                        # 将JSON格式化为字符串，放在带滚动条的文本框中（允许复制）
+                        json_str = json.dumps(json_result, ensure_ascii=False, indent=2)
+                        st.text_area(
+                            "JSON内容",
+                            json_str,
+                            height=780,
+                            disabled=False,  # 改为False以允许复制
+                            label_visibility="collapsed",
+                            key="json_preview_area"
+                        )
                     else:
                         st.info("暂无JSON结果。")
                 else:
@@ -908,7 +964,7 @@ def render_preview_panel(file_path: str, preview_text: str):
                         "JSON内容",
                         "",
                         height=780,
-                        disabled=True,
+                        disabled=False,
                         label_visibility="collapsed",
                         key="json_preview_area"
                     )
@@ -1779,7 +1835,7 @@ def main():
                 st.session_state.view_mode = "analysis"
                 st.success("已加载历史最新分析结果")
 
-        # 操作按钮：idle 显示“开始分析”；completed 显示“重新提交模型分析”
+        # 操作按钮：idle 显示"开始分析"；completed 显示"重新提交模型分析"
         if st.session_state.processing_status in ("idle", "completed"):
             if st.session_state.processing_status == "completed":
                 label = "🔁 重新提交模型分析"
