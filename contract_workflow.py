@@ -26,7 +26,7 @@ class ContractWorkflow:
             base_url="https://qianfan.baidubce.com/v2",
         )
 
-    def process_contract(self, file_path: str, original_file_name: Optional[str] = None, markdown_text: Optional[str] = None) -> Dict[str, Any]:
+    def process_contract(self, file_path: str, original_file_name: Optional[str] = None) -> Dict[str, Any]:
         """
         主工作流：处理合同文件
         1. 解析文档
@@ -45,9 +45,7 @@ class ContractWorkflow:
 
             # 步骤2: 分析风险
             logger.info("步骤2: 分析风险...")
-            # 如果外部提供了markdown（例如OCR布局解析得到的MD），则以其作为基准文本进行风险定位
-            base_text_for_analysis = markdown_text if isinstance(markdown_text, str) and markdown_text.strip() else document_text
-            risk_analysis = self._analyze_risks(base_text_for_analysis)
+            risk_analysis = self._analyze_risks(document_text)
 
             # 步骤3: 生成建议
             logger.info("步骤3: 生成建议...")
@@ -56,7 +54,7 @@ class ContractWorkflow:
             # 步骤4: 整合结果
             logger.info("步骤4: 整合结果...")
             result = self._integrate_results(
-                file_path, document_text, risk_analysis, suggestions, original_file_name, base_markdown_text=markdown_text
+                file_path, document_text, risk_analysis, suggestions, original_file_name
             )
 
             # 保存结果
@@ -180,10 +178,7 @@ class ContractWorkflow:
             "问题描述": "风险描述",
             "风险等级": "高/中/低",
             "法律依据": "相关法律条文",
-            "修改建议": "具体修改建议",
-            "开始索引": "整数，命中片段在提供的Markdown文本中的起始字符索引（含）",
-            "结束索引": "整数，命中片段在提供的Markdown文本中的结束字符索引（不含）",
-            "匹配片段": "从提供的Markdown文本中截取的命中子串，用于校验"
+            "修改建议": "具体修改建议"
         }
         
         特别注意：
@@ -191,7 +186,6 @@ class ContractWorkflow:
         2. 评估条款的公平性和合理性
         3. 关注权利义务的平衡
         4. 提供客观的法律建议
-        5. 所有位置索引必须基于“用户提供的Markdown文本”的原始字符序列进行计算
         """
 
         return self._call_llm_for_analysis(system_prompt, text, "法律风险")
@@ -213,10 +207,7 @@ class ContractWorkflow:
             "风险等级": "高/中/低",
             "影响分析": "商业影响分析",
             "修改建议": "具体修改建议",
-            "商业优化": "商业优化建议",
-            "开始索引": "整数，命中片段在提供的Markdown文本中的起始字符索引（含）",
-            "结束索引": "整数，命中片段在提供的Markdown文本中的结束字符索引（不含）",
-            "匹配片段": "从提供的Markdown文本中截取的命中子串，用于校验"
+            "商业优化": "商业优化建议"
         }
         
         特别注意：
@@ -225,7 +216,6 @@ class ContractWorkflow:
         3. 识别潜在的商业机会和风险
         4. 关注成本收益分配的合理性
         5. 评估长期商业影响和潜在风险
-        6. 所有位置索引必须基于“用户提供的Markdown文本”的原始字符序列进行计算
         """
 
         return self._call_llm_for_analysis(system_prompt, text, "商业风险")
@@ -246,10 +236,7 @@ class ContractWorkflow:
             "条款": "具体位置描述",
             "问题描述": "格式问题描述",
             "风险等级": "高/中/低",
-            "修改建议": "具体修改建议",
-            "开始索引": "整数，命中片段在提供的Markdown文本中的起始字符索引（含）",
-            "结束索引": "整数，命中片段在提供的Markdown文本中的结束字符索引（不含）",
-            "匹配片段": "从提供的Markdown文本中截取的命中子串，用于校验"
+            "修改建议": "具体修改建议"
         }
         """
 
@@ -263,8 +250,7 @@ class ContractWorkflow:
             chat_completion = self.llm_client.chat.completions.create(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    # 明确提示：下方文本为Markdown全文，请基于该Markdown计算位置索引
-                    {"role": "user", "content": f"以下为完整的Markdown文本，请基于该Markdown计算所有位置索引：\n\n{text}"},
+                    {"role": "user", "content": text},
                 ],
                 model="ernie-4.5-turbo-128k",
                 temperature=0.7,
@@ -474,7 +460,6 @@ class ContractWorkflow:
         risk_analysis: Dict[str, Any],
         suggestions: Dict[str, Any],
         original_file_name: Optional[str] = None,
-        base_markdown_text: Optional[str] = None,
     ) -> Dict[str, Any]:
         """步骤4: 整合所有结果"""
         logger.info("整合分析结果...")
@@ -483,7 +468,6 @@ class ContractWorkflow:
             "file_path": file_path,
             "original_file_name": original_file_name if original_file_name else os.path.basename(file_path),
             "document_text": document_text,
-            "base_markdown_text": base_markdown_text,
             "risk_analysis": risk_analysis,
             "suggestions": suggestions,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
