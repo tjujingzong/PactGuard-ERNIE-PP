@@ -1579,8 +1579,240 @@ def find_text_positions_in_json(clause_text: str, json_result: Dict[str, Any]) -
     return matches
 
 
+def _classify_font_size(font_size: float) -> tuple[str, float]:
+    """将字体大小分类为大、中、小三类，并返回标准大小
+    
+    Args:
+        font_size: 原始字体大小
+        
+    Returns:
+        (分类名称, 标准字体大小) 元组
+    """
+    # 定义分类阈值
+    # 小：< 16px
+    # 中：16px - 24px
+    # 大：> 24px
+    if font_size < 16:
+        return ("小", 14.0)
+    elif font_size <= 24:
+        return ("中", 18.0)
+    else:
+        return ("大", 24.0)
+
+
+def _calculate_font_size_from_bbox(bbox: List[float]) -> float:
+    """根据边界框计算字体大小（像素），并分类"""
+    if len(bbox) < 4:
+        return 14.0  # 默认字体大小（小）
+    
+    # bbox格式: [x, y, width, height] 或 [x1, y1, x2, y2]
+    if len(bbox) == 4:
+        # 如果是 [x, y, width, height]
+        if bbox[2] > 0 and bbox[3] > 0:
+            # 高度通常对应字体大小，但需要稍微调整
+            height = bbox[3]
+            # 字体大小通常是高度的0.7-0.9倍
+            font_size = height * 0.8
+            # 分类并返回标准大小
+            _, standard_size = _classify_font_size(font_size)
+            return standard_size
+    
+    return 14.0
+
+
+def _calculate_font_size_from_poly(poly: List[List[float]]) -> float:
+    """根据多边形坐标计算字体大小，并分类"""
+    if not poly or len(poly) < 4:
+        return 14.0
+    
+    # 计算高度（取y坐标的最大差值）
+    y_coords = [point[1] for point in poly if len(point) >= 2]
+    if len(y_coords) >= 2:
+        height = max(y_coords) - min(y_coords)
+        font_size = height * 0.8
+        # 分类并返回标准大小
+        _, standard_size = _classify_font_size(font_size)
+        return standard_size
+    
+    return 14.0
+
+
+def _get_text_alignment(poly: List[List[float]], page_width: float = 1200) -> str:
+    """根据文本位置判断对齐方式，强制分类为左、中、右三类
+    
+    Args:
+        poly: 文本多边形坐标
+        page_width: 页面宽度
+        
+    Returns:
+        "left", "center", 或 "right"
+    """
+    if not poly or len(poly) < 4:
+        return "left"
+    
+    # 计算文本的x坐标范围
+    x_coords = [point[0] for point in poly if len(point) >= 1]
+    if not x_coords:
+        return "left"
+    
+    min_x = min(x_coords)
+    max_x = max(x_coords)
+    center_x = (min_x + max_x) / 2
+    
+    # 动态计算页面宽度（如果提供了）
+    if page_width <= 0:
+        page_width = max_x * 2  # 估算页面宽度
+    
+    # 判断对齐方式（使用更严格的阈值）
+    page_center = page_width / 2
+    left_threshold = page_width * 0.2  # 左侧20%区域
+    right_threshold = page_width * 0.8  # 右侧20%区域
+    center_threshold = page_width * 0.15  # 中心区域±15%
+    
+    # 判断是否居中（中心点在页面中心±15%范围内）
+    if abs(center_x - page_center) < center_threshold:
+        return "center"
+    # 判断是否右对齐（文本中心在右侧80%之后）
+    elif center_x > right_threshold:
+        return "right"
+    # 否则左对齐
+    else:
+        return "left"
+
+
+def _extract_ocr_text_elements(layout_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """从layout_result中提取所有OCR文本元素及其位置信息，并按行组织"""
+    text_elements = []
+    
+    pruned_result = layout_result.get("prunedResult", {})
+    overall_ocr = pruned_result.get("overall_ocr_res", {})
+    
+    if not overall_ocr:
+        return text_elements
+    
+    rec_texts = overall_ocr.get("rec_texts", [])
+    rec_polys = overall_ocr.get("rec_polys", [])
+    rec_scores = overall_ocr.get("rec_scores", [])
+    
+    for idx, text in enumerate(rec_texts):
+        if not text or not text.strip():
+            continue
+        
+        poly = rec_polys[idx] if idx < len(rec_polys) else []
+        score = rec_scores[idx] if idx < len(rec_scores) else 0.0
+        
+        if poly and len(poly) >= 4:
+            # 计算位置和大小
+            x_coords = [p[0] for p in poly if len(p) >= 1]
+            y_coords = [p[1] for p in poly if len(p) >= 2]
+            
+            if x_coords and y_coords:
+                min_x = min(x_coords)
+                min_y = min(y_coords)
+                max_x = max(x_coords)
+                max_y = max(y_coords)
+                
+                width = max_x - min_x
+                height = max_y - min_y
+                
+                # 跳过过小的文本块（可能是噪声）
+                if width < 5 or height < 5:
+                    continue
+                
+                font_size = _calculate_font_size_from_poly(poly)
+                alignment = _get_text_alignment(poly)
+                
+                text_elements.append({
+                    "text": text,
+                    "x": min_x,
+                    "y": min_y,
+                    "width": width,
+                    "height": height,
+                    "font_size": font_size,
+                    "alignment": alignment,
+                    "poly": poly,
+                    "score": score
+                })
+    
+    # 按行组织文本元素
+    if text_elements:
+        # 先按y坐标粗略排序
+        text_elements.sort(key=lambda e: (e["y"], e["x"]))
+        
+        # 将文本元素按行分组
+        lines = []
+        current_line = []
+        line_y = None
+        line_height = None
+        
+        for elem in text_elements:
+            elem_y = elem["y"]
+            elem_height = elem["height"]
+            
+            # 判断是否属于同一行（y坐标差异小于行高的1.5倍）
+            if line_y is None or abs(elem_y - line_y) > (line_height or elem_height) * 1.5:
+                # 新的一行，先处理上一行
+                if current_line:
+                    current_line.sort(key=lambda e: e["x"])
+                    # 计算行的统一属性
+                    avg_font_size = sum(e["font_size"] for e in current_line) / len(current_line)
+                    # 分类字体大小
+                    _, line_font_size = _classify_font_size(avg_font_size)
+                    
+                    line_min_x = min(e["x"] for e in current_line)
+                    line_max_x = max(e["x"] + e["width"] for e in current_line)
+                    line_width = line_max_x - line_min_x
+                    # 行的对齐方式：根据第一个元素判断，并强制分类
+                    line_alignment = current_line[0]["alignment"]
+                    
+                    lines.append({
+                        "elements": current_line,
+                        "y": line_y,
+                        "x": line_min_x,
+                        "width": line_width,
+                        "height": line_height,
+                        "font_size": line_font_size,
+                        "alignment": line_alignment
+                    })
+                current_line = [elem]
+                line_y = elem_y
+                line_height = elem_height
+            else:
+                # 同一行，添加到当前行
+                current_line.append(elem)
+                # 更新行高（取较大值）
+                line_height = max(line_height or elem_height, elem_height)
+        
+        # 处理最后一行
+        if current_line:
+            current_line.sort(key=lambda e: e["x"])
+            avg_font_size = sum(e["font_size"] for e in current_line) / len(current_line)
+            # 分类字体大小
+            _, line_font_size = _classify_font_size(avg_font_size)
+            
+            line_min_x = min(e["x"] for e in current_line)
+            line_max_x = max(e["x"] + e["width"] for e in current_line)
+            line_width = line_max_x - line_min_x
+            line_alignment = current_line[0]["alignment"]
+            
+            lines.append({
+                "elements": current_line,
+                "y": line_y,
+                "x": line_min_x,
+                "width": line_width,
+                "height": line_height,
+                "font_size": line_font_size,
+                "alignment": line_alignment
+            })
+        
+        return lines
+    
+    return []
+
+
 def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str:
     """基于JSON生成HTML版面恢复，并标注风险点
+    使用OCR的精确位置信息来还原版面布局
     
     Args:
         json_result: OCR解析得到的JSON结果
@@ -1610,11 +1842,23 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
     <style>
         .document-container {
             font-family: 'SimSun', '宋体', serif;
+            position: relative;
             max-width: 100%;
             margin: 0 auto;
             padding: 20px;
             background: #fff;
-            line-height: 1.8;
+            min-height: 100vh;
+        }
+        .page-wrapper {
+            position: relative;
+            margin-bottom: 40px;
+            min-height: 800px;
+        }
+        .text-element {
+            position: absolute;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            line-height: 1.2;
         }
         .text-block {
             position: relative;
@@ -1687,104 +1931,271 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
     
     layout_results = json_result.get("layoutParsingResults", [])
     
-    for layout_idx, layout_result in enumerate(layout_results):
-        pruned_result = layout_result.get("prunedResult", {})
-        parsing_list = pruned_result.get("parsing_res_list", [])
-        
-        # 按block_order排序
-        sorted_blocks = sorted(
-            [b for b in parsing_list if b.get("block_order") is not None],
-            key=lambda x: x.get("block_order", 0)
-        )
-        
-        for block in sorted_blocks:
-            block_content = block.get("block_content", "")
-            block_label = block.get("block_label", "text")
-            block_bbox = block.get("block_bbox", [])
+    # 首先尝试使用精确的OCR位置信息
+    use_precise_layout = False
+    for layout_result in layout_results:
+        text_elements = _extract_ocr_text_elements(layout_result)
+        if text_elements:
+            use_precise_layout = True
+            break
+    
+    if use_precise_layout:
+        # 使用精确的OCR位置信息进行版面恢复
+        for layout_idx, layout_result in enumerate(layout_results):
+            text_lines = _extract_ocr_text_elements(layout_result)
             
-            if not block_content:
+            if not text_lines:
                 continue
             
-            # 检查是否有风险点匹配到这个块
-            matched_issues = []
-            for issue_idx, issue_data in issue_positions.items():
-                for pos in issue_data["positions"]:
-                    if (pos.get("block_id") == block.get("block_id") and 
-                        pos.get("layout_idx") == layout_idx and
-                        pos.get("source") == "parsing_res_list"):
-                        matched_issues.append({
-                            "issue": issue_data["issue"],
-                            "match_start": pos.get("match_start", 0),
-                            "match_end": pos.get("match_end", len(block_content))
-                        })
+            # 计算页面尺寸（用于缩放）
+            max_x = max([line["x"] + line["width"] for line in text_lines], default=1200)
+            max_y = max([line["y"] + line["height"] for line in text_lines], default=1600)
             
-            # 如果有匹配的风险点，进行标注
-            if matched_issues:
-                # 按匹配位置排序
-                matched_issues.sort(key=lambda x: x["match_start"])
+            # 重新计算对齐方式（使用实际的页面宽度），强制分类
+            for line in text_lines:
+                # 使用行的第一个元素的多边形重新计算对齐
+                if line["elements"]:
+                    line["alignment"] = _get_text_alignment(line["elements"][0]["poly"], max_x)
+                # 确保对齐方式只有三类
+                if line["alignment"] not in ["left", "center", "right"]:
+                    line["alignment"] = "left"
+            
+            # 计算缩放比例（适应屏幕宽度，但保持最小可读性）
+            scale = min(1.0, 1000 / max_x) if max_x > 0 else 1.0
+            # 确保缩放后字体不会太小
+            min_font_size = 10.0
+            if scale < 0.5:
+                scale = 0.5  # 最小缩放比例
+            
+            html_parts.append(f'<div class="page-wrapper" style="width: {max_x * scale}px; height: {max_y * scale}px;">')
+            
+            # 为每一行创建HTML
+            for line_idx, line in enumerate(text_lines):
+                line_y = line["y"] * scale
+                line_x = line["x"] * scale
+                line_width = line["width"] * scale
+                line_font_size = max(min_font_size, line["font_size"] * scale)
+                line_alignment = line["alignment"]
                 
-                # 构建标注后的HTML
-                html_content = ""
-                last_pos = 0
+                # 构建行内容（合并同一行的所有文本元素）
+                line_content_parts = []
+                elem_global_idx = 0
+                prev_elem_end_x = None
                 
-                for match_info in matched_issues:
-                    # 添加匹配前的文本
-                    if match_info["match_start"] > last_pos:
-                        html_content += _escape_html(block_content[last_pos:match_info["match_start"]])
+                for elem in line["elements"]:
+                    text = elem["text"]
+                    elem_x = elem["x"] * scale
+                    elem_width = elem["width"] * scale
+                    elem_end_x = elem_x + elem_width
                     
-                    # 添加标注的风险文本
-                    risk_level = match_info["issue"].get("风险等级", "低")
-                    risk_class = {
-                        "高": "risk-highlight risk-high",
-                        "中": "risk-highlight risk-medium",
-                        "低": "risk-highlight risk-low"
-                    }.get(risk_level, "risk-highlight risk-low")
+                    # 计算相对于行起始位置的偏移，用于定位
+                    relative_x = elem_x - line_x
                     
-                    issue_idx = next((i for i, d in issue_positions.items() if d["issue"] == match_info["issue"]), -1)
-                    risk_text = block_content[match_info["match_start"]:match_info["match_end"]]
+                    # 计算与前一个元素之间的间距
+                    spacing = ""
+                    if prev_elem_end_x is not None and elem_x > prev_elem_end_x:
+                        # 如果元素之间有间隙，添加空格或margin
+                        gap = elem_x - prev_elem_end_x
+                        if gap > line_font_size * 0.3:  # 如果间隙较大，添加margin
+                            spacing = f'<span style="display: inline-block; width: {gap}px;"></span>'
+                        else:
+                            spacing = " "  # 小间隙用空格
                     
-                    issue_type = match_info["issue"].get("类型", "")
-                    issue_desc = match_info["issue"].get("问题描述", "")
-                    issue_suggestion = match_info["issue"].get("修改建议", "")
+                    # 检查是否有风险点匹配（更精确的匹配）
+                    matched_issues = []
+                    for issue_idx, issue_data in issue_positions.items():
+                        clause_text = issue_data["issue"].get("条款", "")
+                        if clause_text:
+                            # 清理文本进行比较
+                            clause_clean = "".join(clause_text.split())
+                            text_clean = "".join(text.split())
+                            # 检查是否包含或部分匹配
+                            if clause_clean in text_clean or text_clean in clause_clean:
+                                matched_issues.append({
+                                    "issue": issue_data["issue"],
+                                    "issue_idx": issue_idx
+                                })
+                            # 也检查原始文本（去除空白后）
+                            elif len(clause_text) > 5 and clause_text[:5] in text:
+                                matched_issues.append({
+                                    "issue": issue_data["issue"],
+                                    "issue_idx": issue_idx
+                                })
                     
-                    tooltip_id = f"tooltip_{layout_idx}_{block.get('block_id')}_{issue_idx}"
-                    html_content += f'''
-                    <span class="{risk_class}" 
-                          data-issue-idx="{issue_idx}"
-                          onmouseenter="showTooltip(event, '{tooltip_id}')"
-                          onmouseleave="hideTooltip('{tooltip_id}')">
-                        {_escape_html(risk_text)}
-                        <div id="{tooltip_id}" class="risk-tooltip">
-                            <h4>{_escape_html(issue_type)}</h4>
-                            <p><strong>风险等级：</strong>{risk_level}</p>
-                            <p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p>
-                            <p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p>
-                        </div>
-                    </span>
-                    '''
+                    # 构建文本内容
+                    if matched_issues:
+                        # 有风险点，进行标注
+                        risk_level = matched_issues[0]["issue"].get("风险等级", "低")
+                        risk_class = {
+                            "高": "risk-highlight risk-high",
+                            "中": "risk-highlight risk-medium",
+                            "低": "risk-highlight risk-low"
+                        }.get(risk_level, "risk-highlight risk-low")
+                        
+                        issue_idx = matched_issues[0]["issue_idx"]
+                        issue_type = matched_issues[0]["issue"].get("类型", "")
+                        issue_desc = matched_issues[0]["issue"].get("问题描述", "")
+                        issue_suggestion = matched_issues[0]["issue"].get("修改建议", "")
+                        
+                        tooltip_id = f"tooltip_{layout_idx}_{line_idx}_{elem_global_idx}_{issue_idx}"
+                        escaped_text = _escape_html(text)
+                        
+                        text_span = f'''
+                        {spacing}<span class="{risk_class}" 
+                              data-issue-idx="{issue_idx}"
+                              onmouseenter="showTooltip(event, '{tooltip_id}')"
+                              onmouseleave="hideTooltip('{tooltip_id}')"
+                              style="position: relative; display: inline-block;">
+                            {escaped_text}
+                            <div id="{tooltip_id}" class="risk-tooltip">
+                                <h4>{_escape_html(issue_type)}</h4>
+                                <p><strong>风险等级：</strong>{risk_level}</p>
+                                <p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p>
+                                <p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p>
+                            </div>
+                        </span>
+                        '''
+                        line_content_parts.append(text_span)
+                    else:
+                        escaped_text = _escape_html(text)
+                        line_content_parts.append(f'{spacing}<span style="display: inline-block;">{escaped_text}</span>')
                     
-                    last_pos = match_info["match_end"]
+                    prev_elem_end_x = elem_end_x
+                    elem_global_idx += 1
                 
-                # 添加剩余文本
-                if last_pos < len(block_content):
-                    html_content += _escape_html(block_content[last_pos:])
+                # 合并行内容
+                line_content = "".join(line_content_parts)
                 
-                # 根据block_label设置样式
-                if block_label == "doc_title":
-                    html_parts.append(f'<h1 style="text-align: center; margin: 20px 0;">{html_content}</h1>')
-                elif block_label == "paragraph_title":
-                    html_parts.append(f'<h2 style="margin: 15px 0 10px 0;">{html_content}</h2>')
+                # 根据对齐方式设置样式
+                text_align = "left"
+                if line_alignment == "center":
+                    text_align = "center"
+                elif line_alignment == "right":
+                    text_align = "right"
+                
+                # 根据字体大小分类判断HTML标签
+                font_category, _ = _classify_font_size(line_font_size)
+                if font_category == "大":
+                    tag = "h2"
+                elif font_category == "中":
+                    tag = "h3"
                 else:
-                    html_parts.append(f'<div class="text-block">{html_content}</div>')
-            else:
-                # 没有风险点，直接显示
-                escaped_content = _escape_html(block_content)
-                if block_label == "doc_title":
-                    html_parts.append(f'<h1 style="text-align: center; margin: 20px 0;">{escaped_content}</h1>')
-                elif block_label == "paragraph_title":
-                    html_parts.append(f'<h2 style="margin: 15px 0 10px 0;">{escaped_content}</h2>')
+                    tag = "div"
+                
+                # 使用统一的样式，确保同一行字体大小和对齐方式一致
+                style = f"left: {line_x}px; top: {line_y}px; font-size: {line_font_size}px; text-align: {text_align}; width: {line_width}px; position: absolute;"
+                
+                if tag in ["h2", "h3"]:
+                    html_parts.append(f'<{tag} class="text-element" style="{style}">{line_content}</{tag}>')
                 else:
-                    html_parts.append(f'<div class="text-block">{escaped_content}</div>')
+                    html_parts.append(f'<div class="text-element" style="{style}">{line_content}</div>')
+            
+            html_parts.append('</div>')
+    else:
+        # 回退到原来的方法（使用block信息）
+        for layout_idx, layout_result in enumerate(layout_results):
+            pruned_result = layout_result.get("prunedResult", {})
+            parsing_list = pruned_result.get("parsing_res_list", [])
+            
+            # 按block_order排序
+            sorted_blocks = sorted(
+                [b for b in parsing_list if b.get("block_order") is not None],
+                key=lambda x: x.get("block_order", 0)
+            )
+            
+            for block in sorted_blocks:
+                block_content = block.get("block_content", "")
+                block_label = block.get("block_label", "text")
+                block_bbox = block.get("block_bbox", [])
+                
+                if not block_content:
+                    continue
+                
+                # 计算字体大小（已经分类为标准大小）
+                font_size = _calculate_font_size_from_bbox(block_bbox) if block_bbox else 14.0
+                # 确保字体大小是标准化的（虽然_calculate_font_size_from_bbox已经分类了，但这里再确认一下）
+                _, font_size = _classify_font_size(font_size)
+                
+                # 检查是否有风险点匹配到这个块
+                matched_issues = []
+                for issue_idx, issue_data in issue_positions.items():
+                    for pos in issue_data["positions"]:
+                        if (pos.get("block_id") == block.get("block_id") and 
+                            pos.get("layout_idx") == layout_idx and
+                            pos.get("source") == "parsing_res_list"):
+                            matched_issues.append({
+                                "issue": issue_data["issue"],
+                                "match_start": pos.get("match_start", 0),
+                                "match_end": pos.get("match_end", len(block_content))
+                            })
+                
+                # 如果有匹配的风险点，进行标注
+                if matched_issues:
+                    # 按匹配位置排序
+                    matched_issues.sort(key=lambda x: x["match_start"])
+                    
+                    # 构建标注后的HTML
+                    html_content = ""
+                    last_pos = 0
+                    
+                    for match_info in matched_issues:
+                        # 添加匹配前的文本
+                        if match_info["match_start"] > last_pos:
+                            html_content += _escape_html(block_content[last_pos:match_info["match_start"]])
+                        
+                        # 添加标注的风险文本
+                        risk_level = match_info["issue"].get("风险等级", "低")
+                        risk_class = {
+                            "高": "risk-highlight risk-high",
+                            "中": "risk-highlight risk-medium",
+                            "低": "risk-highlight risk-low"
+                        }.get(risk_level, "risk-highlight risk-low")
+                        
+                        issue_idx = next((i for i, d in issue_positions.items() if d["issue"] == match_info["issue"]), -1)
+                        risk_text = block_content[match_info["match_start"]:match_info["match_end"]]
+                        
+                        issue_type = match_info["issue"].get("类型", "")
+                        issue_desc = match_info["issue"].get("问题描述", "")
+                        issue_suggestion = match_info["issue"].get("修改建议", "")
+                        
+                        tooltip_id = f"tooltip_{layout_idx}_{block.get('block_id')}_{issue_idx}"
+                        html_content += f'''
+                        <span class="{risk_class}" 
+                              data-issue-idx="{issue_idx}"
+                              onmouseenter="showTooltip(event, '{tooltip_id}')"
+                              onmouseleave="hideTooltip('{tooltip_id}')">
+                            {_escape_html(risk_text)}
+                            <div id="{tooltip_id}" class="risk-tooltip">
+                                <h4>{_escape_html(issue_type)}</h4>
+                                <p><strong>风险等级：</strong>{risk_level}</p>
+                                <p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p>
+                                <p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p>
+                            </div>
+                        </span>
+                        '''
+                        
+                        last_pos = match_info["match_end"]
+                    
+                    # 添加剩余文本
+                    if last_pos < len(block_content):
+                        html_content += _escape_html(block_content[last_pos:])
+                    
+                    # 根据block_label和字体大小设置样式
+                    if block_label == "doc_title":
+                        html_parts.append(f'<h1 style="text-align: center; margin: 20px 0; font-size: {font_size * 1.5}px;">{html_content}</h1>')
+                    elif block_label == "paragraph_title":
+                        html_parts.append(f'<h2 style="margin: 15px 0 10px 0; font-size: {font_size * 1.2}px;">{html_content}</h2>')
+                    else:
+                        html_parts.append(f'<div class="text-block" style="font-size: {font_size}px;">{html_content}</div>')
+                else:
+                    # 没有风险点，直接显示
+                    escaped_content = _escape_html(block_content)
+                    if block_label == "doc_title":
+                        html_parts.append(f'<h1 style="text-align: center; margin: 20px 0; font-size: {font_size * 1.5}px;">{escaped_content}</h1>')
+                    elif block_label == "paragraph_title":
+                        html_parts.append(f'<h2 style="margin: 15px 0 10px 0; font-size: {font_size * 1.2}px;">{escaped_content}</h2>')
+                    else:
+                        html_parts.append(f'<div class="text-block" style="font-size: {font_size}px;">{escaped_content}</div>')
     
     # 添加JavaScript用于显示/隐藏工具提示
     html_parts.append("""
