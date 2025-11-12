@@ -180,10 +180,7 @@ class ContractWorkflow:
             "问题描述": "风险描述",
             "风险等级": "高/中/低",
             "法律依据": "相关法律条文",
-            "修改建议": "具体修改建议",
-            "开始索引": "整数，命中片段在提供的Markdown文本中的起始字符索引（含）",
-            "结束索引": "整数，命中片段在提供的Markdown文本中的结束字符索引（不含）",
-            "匹配片段": "从提供的Markdown文本中截取的命中子串，用于校验"
+            "修改建议": "具体修改建议"
         }
         
         特别注意：
@@ -191,7 +188,7 @@ class ContractWorkflow:
         2. 评估条款的公平性和合理性
         3. 关注权利义务的平衡
         4. 提供客观的法律建议
-        5. 所有位置索引必须基于“用户提供的Markdown文本”的原始字符序列进行计算
+        5. "条款"字段必须包含完整的条款原文，以便后续进行文本匹配定位
         """
 
         return self._call_llm_for_analysis(system_prompt, text, "法律风险")
@@ -213,10 +210,7 @@ class ContractWorkflow:
             "风险等级": "高/中/低",
             "影响分析": "商业影响分析",
             "修改建议": "具体修改建议",
-            "商业优化": "商业优化建议",
-            "开始索引": "整数，命中片段在提供的Markdown文本中的起始字符索引（含）",
-            "结束索引": "整数，命中片段在提供的Markdown文本中的结束字符索引（不含）",
-            "匹配片段": "从提供的Markdown文本中截取的命中子串，用于校验"
+            "商业优化": "商业优化建议"
         }
         
         特别注意：
@@ -225,7 +219,7 @@ class ContractWorkflow:
         3. 识别潜在的商业机会和风险
         4. 关注成本收益分配的合理性
         5. 评估长期商业影响和潜在风险
-        6. 所有位置索引必须基于“用户提供的Markdown文本”的原始字符序列进行计算
+        6. "条款"字段必须包含完整的条款原文，以便后续进行文本匹配定位
         """
 
         return self._call_llm_for_analysis(system_prompt, text, "商业风险")
@@ -243,14 +237,14 @@ class ContractWorkflow:
         输出格式必须是JSON数组，每个问题包含以下字段：
         {
             "类型": "格式问题",
-            "条款": "具体位置描述",
+            "条款": "具体位置描述或相关文本",
             "问题描述": "格式问题描述",
             "风险等级": "高/中/低",
-            "修改建议": "具体修改建议",
-            "开始索引": "整数，命中片段在提供的Markdown文本中的起始字符索引（含）",
-            "结束索引": "整数，命中片段在提供的Markdown文本中的结束字符索引（不含）",
-            "匹配片段": "从提供的Markdown文本中截取的命中子串，用于校验"
+            "修改建议": "具体修改建议"
         }
+        
+        特别注意：
+        "条款"字段应包含相关的位置描述或文本内容，以便后续进行文本匹配定位
         """
 
         return self._call_llm_for_analysis(system_prompt, text, "格式问题")
@@ -263,8 +257,7 @@ class ContractWorkflow:
             chat_completion = self.llm_client.chat.completions.create(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    # 明确提示：下方文本为Markdown全文，请基于该Markdown计算位置索引
-                    {"role": "user", "content": f"以下为完整的Markdown文本，请基于该Markdown计算所有位置索引：\n\n{text}"},
+                    {"role": "user", "content": f"请分析以下合同文本：\n\n{text}"},
                 ],
                 model="ernie-4.5-turbo-128k",
                 temperature=0.7,

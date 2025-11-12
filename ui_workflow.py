@@ -1462,89 +1462,386 @@ def call_online_parse_api(file_path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def add_highlights_to_text(text: str, issues: List[Dict]) -> str:
-    """为文本添加简单标记 - 所有问题都标记显示"""
-    if not issues:
-        return text
-
-    highlighted_text = text
-    for issue in issues:
-        clause = issue.get("条款", "")
-        risk_level = issue.get("风险等级", "低")
-        issue_type = issue.get("类型", "问题")
-
-        if clause and clause in highlighted_text:
-            # 根据风险等级选择标记符号
-            if risk_level == "高":
-                marker = "🔴【重大风险】"
-            elif risk_level == "中":
-                marker = "🟡【一般风险】"
-            else:
-                marker = "🟢【低风险】"
-
-            # 添加简单标记
-            marked_text = f"{marker} {clause}"
-            highlighted_text = highlighted_text.replace(clause, marked_text)
-
-    return highlighted_text
-
-
-def annotate_markdown_with_positions(markdown_text: str, issues: List[Dict]) -> str:
-    """基于位置索引在Markdown中标注风险点。
-    要求issues中包含“开始索引/结束索引”或“start_index/end_index”，索引基于原始markdown_text。
-    使用HTML <mark> 包裹，便于在Markdown渲染中保留样式。
+def find_text_positions_in_json(clause_text: str, json_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """通过文本匹配在JSON中查找条款的位置信息
+    
+    Args:
+        clause_text: 要查找的条款文本
+        json_result: OCR解析得到的JSON结果
+        
+    Returns:
+        匹配到的位置信息列表，每个元素包含：
+        - block_id: 块ID
+        - block_content: 块内容
+        - block_bbox: 块位置 [x, y, width, height]
+        - match_text: 匹配到的文本片段
+        - match_start: 在block_content中的匹配起始位置
+        - match_end: 在block_content中的匹配结束位置
     """
-    if not markdown_text or not issues:
-        return markdown_text
+    if not clause_text or not json_result:
+        return []
+    
+    # 清理条款文本，去除多余空白
+    clause_text_clean = " ".join(clause_text.split())
+    
+    matches = []
+    layout_results = json_result.get("layoutParsingResults", [])
+    
+    for layout_idx, layout_result in enumerate(layout_results):
+        pruned_result = layout_result.get("prunedResult", {})
+        
+        # 从parsing_res_list中查找
+        parsing_list = pruned_result.get("parsing_res_list", [])
+        for block in parsing_list:
+            block_content = block.get("block_content", "")
+            if not block_content:
+                continue
+            
+            # 清理块内容
+            block_content_clean = " ".join(block_content.split())
+            
+            # 尝试精确匹配
+            if clause_text_clean in block_content_clean:
+                match_start = block_content_clean.find(clause_text_clean)
+                match_end = match_start + len(clause_text_clean)
+                matches.append({
+                    "block_id": block.get("block_id"),
+                    "block_content": block_content,
+                    "block_bbox": block.get("block_bbox", []),
+                    "match_text": clause_text_clean,
+                    "match_start": match_start,
+                    "match_end": match_end,
+                    "layout_idx": layout_idx,
+                    "source": "parsing_res_list"
+                })
+            else:
+                # 尝试部分匹配（如果条款文本较长，尝试匹配子串）
+                if len(clause_text_clean) > 10:
+                    # 尝试匹配前20个字符
+                    prefix = clause_text_clean[:20]
+                    if prefix in block_content_clean:
+                        match_start = block_content_clean.find(prefix)
+                        match_end = min(match_start + len(clause_text_clean), len(block_content_clean))
+                        matches.append({
+                            "block_id": block.get("block_id"),
+                            "block_content": block_content,
+                            "block_bbox": block.get("block_bbox", []),
+                            "match_text": clause_text_clean[:match_end - match_start],
+                            "match_start": match_start,
+                            "match_end": match_end,
+                            "layout_idx": layout_idx,
+                            "source": "parsing_res_list"
+                        })
+        
+        # 从overall_ocr_res中查找
+        overall_ocr = pruned_result.get("overall_ocr_res", {})
+        rec_texts = overall_ocr.get("rec_texts", [])
+        rec_boxes = overall_ocr.get("rec_boxes", [])
+        rec_polys = overall_ocr.get("rec_polys", [])
+        
+        # 在OCR文本中查找
+        for idx, rec_text in enumerate(rec_texts):
+            if not rec_text:
+                continue
+            
+            rec_text_clean = " ".join(rec_text.split())
+            
+            if clause_text_clean in rec_text_clean:
+                box = rec_boxes[idx] if idx < len(rec_boxes) else []
+                poly = rec_polys[idx] if idx < len(rec_polys) else []
+                matches.append({
+                    "block_id": f"ocr_{idx}",
+                    "block_content": rec_text,
+                    "block_bbox": box if box else [],
+                    "rec_poly": poly,
+                    "match_text": clause_text_clean,
+                    "match_start": 0,
+                    "match_end": len(rec_text_clean),
+                    "layout_idx": layout_idx,
+                    "source": "overall_ocr_res"
+                })
+            elif len(clause_text_clean) > 10 and clause_text_clean[:10] in rec_text_clean:
+                # 部分匹配
+                box = rec_boxes[idx] if idx < len(rec_boxes) else []
+                poly = rec_polys[idx] if idx < len(rec_polys) else []
+                matches.append({
+                    "block_id": f"ocr_{idx}",
+                    "block_content": rec_text,
+                    "block_bbox": box if box else [],
+                    "rec_poly": poly,
+                    "match_text": clause_text_clean[:10],
+                    "match_start": 0,
+                    "match_end": len(rec_text_clean),
+                    "layout_idx": layout_idx,
+                    "source": "overall_ocr_res"
+                })
+    
+    return matches
 
-    ranges = []
-    for issue in issues:
-        if not isinstance(issue, dict):
-            continue
-        start = issue.get("开始索引")
-        end = issue.get("结束索引")
-        # 兼容英文字段
-        if start is None:
-            start = issue.get("start_index")
-        if end is None:
-            end = issue.get("end_index")
-        if isinstance(start, int) and isinstance(end, int) and 0 <= start < end <= len(markdown_text):
-            risk_level = issue.get("风险等级", "低")
-            ranges.append((start, end, risk_level))
 
-    if not ranges:
-        return markdown_text
+def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str:
+    """基于JSON生成HTML版面恢复，并标注风险点
+    
+    Args:
+        json_result: OCR解析得到的JSON结果
+        issues: 风险点列表
+        
+    Returns:
+        HTML字符串
+    """
+    if not json_result:
+        return "<div>暂无文档内容</div>"
+    
+    # 为每个风险点查找位置
+    issue_positions = {}
+    for idx, issue in enumerate(issues):
+        clause_text = issue.get("条款", "")
+        if clause_text:
+            positions = find_text_positions_in_json(clause_text, json_result)
+            if positions:
+                issue_positions[idx] = {
+                    "issue": issue,
+                    "positions": positions
+                }
+    
+    # 生成HTML
+    html_parts = []
+    html_parts.append("""
+    <style>
+        .document-container {
+            font-family: 'SimSun', '宋体', serif;
+            max-width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+            background: #fff;
+            line-height: 1.8;
+        }
+        .text-block {
+            position: relative;
+            margin: 5px 0;
+            padding: 2px 4px;
+        }
+        .risk-highlight {
+            background-color: #fde2e2;
+            color: #b71c1c;
+            padding: 2px 4px;
+            border-radius: 3px;
+            cursor: pointer;
+            position: relative;
+            border: 1px solid #f44336;
+        }
+        .risk-highlight:hover {
+            background-color: #ffcdd2;
+            box-shadow: 0 2px 4px rgba(244, 67, 54, 0.3);
+        }
+        .risk-medium {
+            background-color: #fff3cd;
+            color: #8a6d3b;
+            border: 1px solid #ff9800;
+        }
+        .risk-medium:hover {
+            background-color: #ffe082;
+            box-shadow: 0 2px 4px rgba(255, 152, 0, 0.3);
+        }
+        .risk-low {
+            background-color: #e8f5e9;
+            color: #1b5e20;
+            border: 1px solid #4caf50;
+        }
+        .risk-low:hover {
+            background-color: #c8e6c9;
+            box-shadow: 0 2px 4px rgba(76, 175, 80, 0.3);
+        }
+        .risk-tooltip {
+            position: fixed;
+            background: #333;
+            color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 10000;
+            max-width: 350px;
+            display: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            pointer-events: none;
+            word-wrap: break-word;
+        }
+        .risk-tooltip.show {
+            display: block;
+        }
+        .risk-tooltip h4 {
+            margin: 0 0 5px 0;
+            font-size: 14px;
+            color: #ffcdd2;
+            border-bottom: 1px solid #555;
+            padding-bottom: 5px;
+        }
+        .risk-tooltip p {
+            margin: 5px 0;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+    </style>
+    <div class="document-container">
+    """)
+    
+    layout_results = json_result.get("layoutParsingResults", [])
+    
+    for layout_idx, layout_result in enumerate(layout_results):
+        pruned_result = layout_result.get("prunedResult", {})
+        parsing_list = pruned_result.get("parsing_res_list", [])
+        
+        # 按block_order排序
+        sorted_blocks = sorted(
+            [b for b in parsing_list if b.get("block_order") is not None],
+            key=lambda x: x.get("block_order", 0)
+        )
+        
+        for block in sorted_blocks:
+            block_content = block.get("block_content", "")
+            block_label = block.get("block_label", "text")
+            block_bbox = block.get("block_bbox", [])
+            
+            if not block_content:
+                continue
+            
+            # 检查是否有风险点匹配到这个块
+            matched_issues = []
+            for issue_idx, issue_data in issue_positions.items():
+                for pos in issue_data["positions"]:
+                    if (pos.get("block_id") == block.get("block_id") and 
+                        pos.get("layout_idx") == layout_idx and
+                        pos.get("source") == "parsing_res_list"):
+                        matched_issues.append({
+                            "issue": issue_data["issue"],
+                            "match_start": pos.get("match_start", 0),
+                            "match_end": pos.get("match_end", len(block_content))
+                        })
+            
+            # 如果有匹配的风险点，进行标注
+            if matched_issues:
+                # 按匹配位置排序
+                matched_issues.sort(key=lambda x: x["match_start"])
+                
+                # 构建标注后的HTML
+                html_content = ""
+                last_pos = 0
+                
+                for match_info in matched_issues:
+                    # 添加匹配前的文本
+                    if match_info["match_start"] > last_pos:
+                        html_content += _escape_html(block_content[last_pos:match_info["match_start"]])
+                    
+                    # 添加标注的风险文本
+                    risk_level = match_info["issue"].get("风险等级", "低")
+                    risk_class = {
+                        "高": "risk-highlight risk-high",
+                        "中": "risk-highlight risk-medium",
+                        "低": "risk-highlight risk-low"
+                    }.get(risk_level, "risk-highlight risk-low")
+                    
+                    issue_idx = next((i for i, d in issue_positions.items() if d["issue"] == match_info["issue"]), -1)
+                    risk_text = block_content[match_info["match_start"]:match_info["match_end"]]
+                    
+                    issue_type = match_info["issue"].get("类型", "")
+                    issue_desc = match_info["issue"].get("问题描述", "")
+                    issue_suggestion = match_info["issue"].get("修改建议", "")
+                    
+                    tooltip_id = f"tooltip_{layout_idx}_{block.get('block_id')}_{issue_idx}"
+                    html_content += f'''
+                    <span class="{risk_class}" 
+                          data-issue-idx="{issue_idx}"
+                          onmouseenter="showTooltip(event, '{tooltip_id}')"
+                          onmouseleave="hideTooltip('{tooltip_id}')">
+                        {_escape_html(risk_text)}
+                        <div id="{tooltip_id}" class="risk-tooltip">
+                            <h4>{_escape_html(issue_type)}</h4>
+                            <p><strong>风险等级：</strong>{risk_level}</p>
+                            <p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p>
+                            <p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p>
+                        </div>
+                    </span>
+                    '''
+                    
+                    last_pos = match_info["match_end"]
+                
+                # 添加剩余文本
+                if last_pos < len(block_content):
+                    html_content += _escape_html(block_content[last_pos:])
+                
+                # 根据block_label设置样式
+                if block_label == "doc_title":
+                    html_parts.append(f'<h1 style="text-align: center; margin: 20px 0;">{html_content}</h1>')
+                elif block_label == "paragraph_title":
+                    html_parts.append(f'<h2 style="margin: 15px 0 10px 0;">{html_content}</h2>')
+                else:
+                    html_parts.append(f'<div class="text-block">{html_content}</div>')
+            else:
+                # 没有风险点，直接显示
+                escaped_content = _escape_html(block_content)
+                if block_label == "doc_title":
+                    html_parts.append(f'<h1 style="text-align: center; margin: 20px 0;">{escaped_content}</h1>')
+                elif block_label == "paragraph_title":
+                    html_parts.append(f'<h2 style="margin: 15px 0 10px 0;">{escaped_content}</h2>')
+                else:
+                    html_parts.append(f'<div class="text-block">{escaped_content}</div>')
+    
+    # 添加JavaScript用于显示/隐藏工具提示
+    html_parts.append("""
+    <script>
+        function showTooltip(event, tooltipId) {
+            const tooltip = document.getElementById(tooltipId);
+            if (tooltip) {
+                tooltip.classList.add('show');
+                // 定位工具提示，确保不超出视口
+                const rect = event.target.getBoundingClientRect();
+                const tooltipRect = tooltip.getBoundingClientRect();
+                let left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+                let top = rect.top - tooltipRect.height - 10;
+                
+                // 如果工具提示超出左边界，调整位置
+                if (left < 10) {
+                    left = 10;
+                }
+                // 如果工具提示超出右边界，调整位置
+                if (left + tooltipRect.width > window.innerWidth - 10) {
+                    left = window.innerWidth - tooltipRect.width - 10;
+                }
+                // 如果工具提示超出上边界，显示在下方
+                if (top < 10) {
+                    top = rect.bottom + 10;
+                }
+                
+                tooltip.style.left = left + 'px';
+                tooltip.style.top = top + 'px';
+            }
+        }
+        function hideTooltip(tooltipId) {
+            const tooltip = document.getElementById(tooltipId);
+            if (tooltip) {
+                tooltip.classList.remove('show');
+            }
+        }
+    </script>
+    </div>
+    """)
+    
+    return "".join(html_parts)
 
-    # 按开始位置排序，避免嵌套错位
-    ranges.sort(key=lambda x: x[0])
 
-    # 逐段拼接，插入标记
-    pieces = []
-    cursor = 0
-    for start, end, level in ranges:
-        # 跳过与已插入产生重叠的无效区间
-        if start < cursor:
-            continue
-        # 追加未标注部分
-        pieces.append(markdown_text[cursor:start])
-        snippet = markdown_text[start:end]
-        # 不同风险等级使用不同高亮色
-        if level == "高":
-            style = "background-color:#fde2e2;color:#b71c1c;padding:0 2px;border-radius:2px;"
-            label = "🔴重大风险"
-        elif level == "中":
-            style = "background-color:#fff3cd;color:#8a6d3b;padding:0 2px;border-radius:2px;"
-            label = "🟡一般风险"
-        else:
-            style = "background-color:#e8f5e9;color:#1b5e20;padding:0 2px;border-radius:2px;"
-            label = "🟢低风险"
-        wrapped = f'<mark style="{style}" title="{label}">{snippet}</mark>'
-        pieces.append(wrapped)
-        cursor = end
-
-    # 追加剩余部分
-    pieces.append(markdown_text[cursor:])
-    return "".join(pieces)
+def _escape_html(text: str) -> str:
+    """转义HTML特殊字符并处理换行"""
+    if not text:
+        return ""
+    # 先转义特殊字符
+    escaped = (text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+                .replace("'", "&#39;"))
+    # 将换行符转换为<br>
+    escaped = escaped.replace("\n", "<br>")
+    return escaped
 
 
 def filter_issues_by_risk(issues: List[Dict], risk_level: str) -> List[Dict]:
@@ -1819,54 +2116,6 @@ def render_markdown_box(markdown_text: str, height: int = 780):
     )
 
 
-def _extract_markdown_string(data: Any) -> str:
-    """尽量从多种结构中提取markdown/纯文本，并把 \n 转换为真实换行。"""
-    def _from_obj(obj: Any) -> Optional[str]:
-        if obj is None:
-            return None
-        # 直接是字符串
-        if isinstance(obj, str):
-            s = obj
-            # 如果是JSON串，尝试解析
-            if s.strip().startswith("{") or s.strip().startswith("["):
-                try:
-                    parsed = json.loads(s)
-                    return _from_obj(parsed)
-                except Exception:
-                    pass
-            # 处理转义换行
-            return s.replace("\r\n", "\n").replace("\n", "\n")
-        # 字典结构
-        if isinstance(obj, dict):
-            # 优先取markdown
-            if isinstance(obj.get("markdown_text"), str):
-                return obj.get("markdown_text")
-            # 常见嵌套 content.text
-            content = obj.get("content")
-            if isinstance(content, dict) and isinstance(content.get("text"), str):
-                return content.get("text")
-            # 兜底 text 字段
-            if isinstance(obj.get("text"), str):
-                return obj.get("text")
-        # 列表：拼接
-        if isinstance(obj, list):
-            parts = []
-            for item in obj:
-                v = _from_obj(item)
-                if v:
-                    parts.append(v)
-            if parts:
-                return "\n\n".join(parts)
-        return None
-
-    extracted = _from_obj(data)
-    if not extracted:
-        return ""
-    # 将字符串中可能存在的转义换行统一处理
-    normalized = extracted.replace("\r\n", "\n").replace("\\n", "\n")
-    return normalized
-
-
 def main():
     """主函数"""
     initialize_session_state()
@@ -1996,46 +2245,43 @@ def main():
                 # 显示合同内容（带高亮）
                 document_text = result.get("document_text", "")
                 if document_text:
-                    # 优先使用OCR解析得到的markdown文本，以获得更好的排版
-                    markdown_source = None
+                    # 始终使用OCR解析得到的JSON结果进行HTML版面恢复
+                    json_result = None
+                    
+                    # 首先尝试从session state获取
                     if st.session_state.get("ocr_parse_result") and isinstance(
                         st.session_state.ocr_parse_result, dict
                     ):
-                        markdown_from_preview = st.session_state.ocr_parse_result.get("markdown_text")
-                        if isinstance(markdown_from_preview, str) and markdown_from_preview.strip():
-                            markdown_source = markdown_from_preview
-                    # 没有OCR markdown时，从document_text中尽量提取纯文本/markdown
-                    if not markdown_source:
-                        markdown_source = _extract_markdown_string(document_text)
-
-                    # 优先使用位置索引进行MD标注；若无索引则回退到关键词替换式标注
-                    has_position = any(
-                        isinstance(issue, dict)
-                        and (
-                            isinstance(issue.get("开始索引"), int) and isinstance(issue.get("结束索引"), int)
-                            or isinstance(issue.get("start_index"), int) and isinstance(issue.get("end_index"), int)
+                        json_result = st.session_state.ocr_parse_result.get("json_result")
+                    
+                    # 如果session state中没有，尝试从缓存加载
+                    if not json_result:
+                        file_path = result.get("file_path", st.session_state.get("saved_file_path"))
+                        original_file_name = result.get("original_file_name", st.session_state.get("file_name"))
+                        if file_path:
+                            cached_result = load_cached_parse_result(file_path, original_file_name)
+                            if cached_result:
+                                json_result = cached_result.get("json_result")
+                                # 更新session state以便后续使用
+                                if not st.session_state.get("ocr_parse_result"):
+                                    st.session_state.ocr_parse_result = cached_result
+                    
+                    # 使用JSON结果进行HTML版面恢复
+                    if json_result:
+                        html_content = generate_html_layout(json_result, all_issues)
+                        
+                        # 显示在可滚动的HTML容器中
+                        st.markdown("### 📄 合同内容（已标记问题）")
+                        st.components.v1.html(
+                            html_content,
+                            height=840,
+                            scrolling=True
                         )
-                        for issue in all_issues
-                    )
-                    if has_position:
-                        highlighted_text = annotate_markdown_with_positions(markdown_source, all_issues)
                     else:
-                        highlighted_text = add_highlights_to_text(markdown_source, all_issues)
-
-                    # 另存标注后的Markdown
-                    try:
-                        json_path, md_path = get_cache_file_paths(result.get("file_path", ""), result.get("original_file_name"))
-                        os.makedirs(os.path.dirname(md_path), exist_ok=True)
-                        annotated_path = md_path[:-3] + ".annotated.md" if md_path.endswith(".md") else (md_path + ".annotated.md")
-                        with open(annotated_path, "w", encoding="utf-8") as f:
-                            f.write(highlighted_text)
-                        st.caption(f"已保存标注Markdown：{annotated_path}")
-                    except Exception as _save_exc:
-                        st.warning(f"保存标注Markdown失败：{_save_exc}")
-
-                    # 显示在可滚动Markdown容器中
-                    st.markdown("### 📄 合同内容（已标记问题）")
-                    render_markdown_box(highlighted_text, height=840)
+                        # 如果没有JSON结果，提示用户先调用OCR解析
+                        st.markdown("### 📄 合同内容（已标记问题）")
+                        st.warning("⚠️ 未找到OCR解析结果，无法进行版面恢复。请在预览界面先调用OCR解析。")
+                        st.info("💡 提示：切换到预览界面，点击「调用OCR解析」按钮，然后再查看分析结果。")
                 else:
                     st.warning("未获取到文档内容")
 
