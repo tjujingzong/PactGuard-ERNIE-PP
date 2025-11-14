@@ -1579,6 +1579,11 @@ def find_text_positions_in_json(clause_text: str, json_result: Dict[str, Any]) -
     return matches
 
 
+# A4页面尺寸（以像素为单位，约等于96DPI下的210mm×297mm）
+A4_WIDTH_PX = 794
+A4_HEIGHT_PX = 1123
+
+
 def _classify_font_size(font_size: float) -> tuple[str, float]:
     """将字体大小分类为大、中、小三类，并返回标准大小
     
@@ -1638,7 +1643,7 @@ def _calculate_font_size_from_poly(poly: List[List[float]]) -> float:
 
 
 def _get_text_alignment(poly: List[List[float]], page_width: float = 1200) -> str:
-    """根据文本位置判断对齐方式，强制分类为左、中、右三类
+    """根据文本起始位置判断对齐方式，强制分类为左、中、右三类
     
     Args:
         poly: 文本多边形坐标
@@ -1657,27 +1662,21 @@ def _get_text_alignment(poly: List[List[float]], page_width: float = 1200) -> st
     
     min_x = min(x_coords)
     max_x = max(x_coords)
-    center_x = (min_x + max_x) / 2
     
     # 动态计算页面宽度（如果提供了）
     if page_width <= 0:
         page_width = max_x * 2  # 估算页面宽度
     
-    # 判断对齐方式（使用更严格的阈值）
-    page_center = page_width / 2
-    left_threshold = page_width * 0.2  # 左侧20%区域
-    right_threshold = page_width * 0.8  # 右侧20%区域
-    center_threshold = page_width * 0.15  # 中心区域±15%
+    # 仅根据起始位置判断：左 0%-35%，右 65%-100%，中 35%-65%
+    left_threshold = page_width * 0.35
+    right_threshold = page_width * 0.65
     
-    # 判断是否居中（中心点在页面中心±15%范围内）
-    if abs(center_x - page_center) < center_threshold:
-        return "center"
-    # 判断是否右对齐（文本中心在右侧80%之后）
-    elif center_x > right_threshold:
-        return "right"
-    # 否则左对齐
-    else:
+    if min_x < left_threshold:
         return "left"
+    elif min_x > right_threshold:
+        return "right"
+    else:
+        return "center"
 
 
 def _extract_ocr_text_elements(layout_result: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1851,14 +1850,21 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
         }
         .page-wrapper {
             position: relative;
-            margin-bottom: 40px;
-            min-height: 800px;
+            margin: 0 auto 40px;
+            width: __A4_WIDTH__px;
+            height: __A4_HEIGHT__px;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            background-color: #fff;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+            overflow: hidden;
         }
         .text-element {
             position: absolute;
             white-space: pre-wrap;
             word-wrap: break-word;
             line-height: 1.2;
+            overflow: visible;
         }
         .text-block {
             position: relative;
@@ -1868,33 +1874,36 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
         .risk-highlight {
             background-color: #fde2e2;
             color: #b71c1c;
-            padding: 2px 4px;
+            padding: 1px 3px;
             border-radius: 3px;
             cursor: pointer;
             position: relative;
-            border: 1px solid #f44336;
+            border: 1px solid rgba(244, 67, 54, 0.5);
+            display: inline;
+            line-height: 1.3;
+            box-shadow: none;
         }
         .risk-highlight:hover {
             background-color: #ffcdd2;
-            box-shadow: 0 2px 4px rgba(244, 67, 54, 0.3);
+            box-shadow: 0 1px 3px rgba(244, 67, 54, 0.2);
         }
         .risk-medium {
             background-color: #fff3cd;
             color: #8a6d3b;
-            border: 1px solid #ff9800;
+            border: 1px solid rgba(255, 152, 0, 0.5);
         }
         .risk-medium:hover {
             background-color: #ffe082;
-            box-shadow: 0 2px 4px rgba(255, 152, 0, 0.3);
+            box-shadow: 0 1px 3px rgba(255, 152, 0, 0.2);
         }
         .risk-low {
             background-color: #e8f5e9;
             color: #1b5e20;
-            border: 1px solid #4caf50;
+            border: 1px solid rgba(76, 175, 80, 0.5);
         }
         .risk-low:hover {
             background-color: #c8e6c9;
-            box-shadow: 0 2px 4px rgba(76, 175, 80, 0.3);
+            box-shadow: 0 1px 3px rgba(76, 175, 80, 0.2);
         }
         .risk-tooltip {
             position: fixed;
@@ -1927,7 +1936,7 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
         }
     </style>
     <div class="document-container">
-    """)
+    """.replace("__A4_WIDTH__", str(A4_WIDTH_PX)).replace("__A4_HEIGHT__", str(A4_HEIGHT_PX)))
     
     layout_results = json_result.get("layoutParsingResults", [])
     
@@ -1948,8 +1957,8 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                 continue
             
             # 计算页面尺寸（用于缩放）
-            max_x = max([line["x"] + line["width"] for line in text_lines], default=1200)
-            max_y = max([line["y"] + line["height"] for line in text_lines], default=1600)
+            max_x = max([line["x"] + line["width"] for line in text_lines], default=A4_WIDTH_PX)
+            max_y = max([line["y"] + line["height"] for line in text_lines], default=A4_HEIGHT_PX)
             
             # 重新计算对齐方式（使用实际的页面宽度），强制分类
             for line in text_lines:
@@ -1960,14 +1969,18 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                 if line["alignment"] not in ["left", "center", "right"]:
                     line["alignment"] = "left"
             
-            # 计算缩放比例（适应屏幕宽度，但保持最小可读性）
-            scale = min(1.0, 1000 / max_x) if max_x > 0 else 1.0
+            # 计算缩放比例，使内容适配A4尺寸
+            doc_width = max_x if max_x > 0 else A4_WIDTH_PX
+            doc_height = max_y if max_y > 0 else A4_HEIGHT_PX
+            width_scale = A4_WIDTH_PX / doc_width
+            height_scale = A4_HEIGHT_PX / doc_height
+            scale = min(width_scale, height_scale)
+            if scale <= 0:
+                scale = 1.0
             # 确保缩放后字体不会太小
             min_font_size = 10.0
-            if scale < 0.5:
-                scale = 0.5  # 最小缩放比例
             
-            html_parts.append(f'<div class="page-wrapper" style="width: {max_x * scale}px; height: {max_y * scale}px;">')
+            html_parts.append(f'<div class="page-wrapper" style="width: {A4_WIDTH_PX}px; height: {A4_HEIGHT_PX}px;">')
             
             # 为每一行创建HTML
             for line_idx, line in enumerate(text_lines):
@@ -2045,7 +2058,7 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                               data-issue-idx="{issue_idx}"
                               onmouseenter="showTooltip(event, '{tooltip_id}')"
                               onmouseleave="hideTooltip('{tooltip_id}')"
-                              style="position: relative; display: inline-block;">
+                              style="position: relative; display: inline;">
                             {escaped_text}
                             <div id="{tooltip_id}" class="risk-tooltip">
                                 <h4>{_escape_html(issue_type)}</h4>
@@ -2058,7 +2071,7 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                         line_content_parts.append(text_span)
                     else:
                         escaped_text = _escape_html(text)
-                        line_content_parts.append(f'{spacing}<span style="display: inline-block;">{escaped_text}</span>')
+                        line_content_parts.append(f'{spacing}<span style="display: inline;">{escaped_text}</span>')
                     
                     prev_elem_end_x = elem_end_x
                     elem_global_idx += 1
