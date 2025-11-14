@@ -249,6 +249,9 @@ def initialize_session_state():
     if "ocr_parsed_file_path" not in st.session_state:
         # 记录上次OCR解析的文件路径，用于检查文件是否切换
         st.session_state.ocr_parsed_file_path = None
+    if "ocr_parsed_original_file_name" not in st.session_state:
+        # 记录上次OCR解析对应的原始文件名，便于比较
+        st.session_state.ocr_parsed_original_file_name = None
     if "view_mode" not in st.session_state:
         # preview: 预览界面；analysis: 分析结果界面
         st.session_state.view_mode = "preview"
@@ -573,10 +576,12 @@ def render_preview_panel(file_path: str, preview_text: str):
             # 如果有缓存，加载并显示
             st.session_state.ocr_parse_result = cached_result
             st.session_state.ocr_parsed_file_path = file_path
+            st.session_state.ocr_parsed_original_file_name = original_file_name
         else:
             # 如果没有缓存，清空OCR解析结果
             st.session_state.ocr_parse_result = None
             st.session_state.ocr_parsed_file_path = None
+            st.session_state.ocr_parsed_original_file_name = None
     
     # 添加同步滚动的JavaScript代码
     sync_scroll_js = """
@@ -766,8 +771,14 @@ def render_preview_panel(file_path: str, preview_text: str):
                 colA, colB = st.columns([1, 1])
                 with colA:
                     if st.button("▶ 调用OCR解析", key="btn_call_ocr"):
-                        st.session_state.ocr_parse_result = call_online_parse_api(file_path)
-                        st.session_state.ocr_parsed_file_path = file_path  # 记录当前解析的文件路径
+                        ocr_result = call_online_parse_api(file_path)
+                        st.session_state.ocr_parse_result = ocr_result
+                        if ocr_result:
+                            st.session_state.ocr_parsed_file_path = file_path  # 记录当前解析的文件路径
+                            st.session_state.ocr_parsed_original_file_name = st.session_state.get("file_name")
+                        else:
+                            st.session_state.ocr_parsed_file_path = None
+                            st.session_state.ocr_parsed_original_file_name = None
                         st.rerun()
                 with colB:
                     if st.session_state.ocr_parse_result:
@@ -2657,7 +2668,7 @@ def main():
             all_issues = risk_analysis.get("all_issues", [])
 
             # 创建左右分栏布局
-            col1, col2 = st.columns([1, 1], gap="large")
+            col1, col2 = st.columns([6, 4], gap="small")
 
             with col1:
                 # 左侧：合同内容区域
@@ -2671,25 +2682,39 @@ def main():
                 if document_text:
                     # 始终使用OCR解析得到的JSON结果进行HTML版面恢复
                     json_result = None
-                    
+
+                    current_file_path = result.get("file_path", st.session_state.get("saved_file_path"))
+                    current_file_name = result.get("original_file_name", st.session_state.get("file_name"))
+
+                    def _is_same_source(parsed_path: Optional[str], parsed_name: Optional[str]) -> bool:
+                        """判断当前OCR缓存是否与结果对应"""
+                        if parsed_path and current_file_path:
+                            try:
+                                if os.path.abspath(parsed_path) == os.path.abspath(current_file_path):
+                                    return True
+                            except Exception:
+                                if parsed_path == current_file_path:
+                                    return True
+                        if parsed_name and current_file_name:
+                            return parsed_name == current_file_name
+                        return False
+
                     # 首先尝试从session state获取
-                    if st.session_state.get("ocr_parse_result") and isinstance(
-                        st.session_state.ocr_parse_result, dict
-                    ):
-                        json_result = st.session_state.ocr_parse_result.get("json_result")
-                    
-                    # 如果session state中没有，尝试从缓存加载
-                    if not json_result:
-                        file_path = result.get("file_path", st.session_state.get("saved_file_path"))
-                        original_file_name = result.get("original_file_name", st.session_state.get("file_name"))
-                        if file_path:
-                            cached_result = load_cached_parse_result(file_path, original_file_name)
-                            if cached_result:
-                                json_result = cached_result.get("json_result")
-                                # 更新session state以便后续使用
-                                if not st.session_state.get("ocr_parse_result"):
-                                    st.session_state.ocr_parse_result = cached_result
-                    
+                    ocr_result = st.session_state.get("ocr_parse_result")
+                    parsed_path = st.session_state.get("ocr_parsed_file_path")
+                    parsed_name = st.session_state.get("ocr_parsed_original_file_name")
+                    if ocr_result and isinstance(ocr_result, dict) and _is_same_source(parsed_path, parsed_name):
+                        json_result = ocr_result.get("json_result")
+
+                    # 如果session state中没有对应文件，尝试从缓存加载
+                    if not json_result and current_file_path:
+                        cached_result = load_cached_parse_result(current_file_path, current_file_name)
+                        if cached_result:
+                            json_result = cached_result.get("json_result")
+                            # 更新session state以便后续使用
+                            st.session_state.ocr_parse_result = cached_result
+                            st.session_state.ocr_parsed_file_path = current_file_path
+                            st.session_state.ocr_parsed_original_file_name = current_file_name
                     # 使用JSON结果进行HTML版面恢复
                     if json_result:
                         html_content = generate_html_layout(json_result, all_issues)
