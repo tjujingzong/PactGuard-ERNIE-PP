@@ -1858,10 +1858,12 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
             position: relative;
             margin: 5px 0;
             padding: 2px 4px;
+            text-align: left;
+            line-height: 1.5;
         }
         .risk-highlight {
             cursor: pointer;
-            position: relative;
+            position: static;
             display: inline;
             line-height: inherit;
             font-size: inherit;
@@ -1871,6 +1873,8 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
             margin: 0;
             padding: 0;
             vertical-align: baseline;
+            white-space: normal;
+            word-wrap: break-word;
         }
         .risk-highlight.risk-high {
             color: #d32f2f;
@@ -2026,18 +2030,7 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                         
                         tooltip_id = f"tooltip_{layout_idx}_{line_idx}_{elem_global_idx}_{matching_issue_idx}"
                         
-                        line_content_parts.append(f'''{spacing}<span class="{risk_class}" 
-                              data-issue-idx="{matching_issue_idx}"
-                              onmouseenter="showTooltip(event, '{tooltip_id}')"
-                              onmouseleave="hideTooltip('{tooltip_id}')">
-                            {escaped_text}
-                            <div id="{tooltip_id}" class="risk-tooltip">
-                                <h4>{_escape_html(issue_type)}</h4>
-                                <p><strong>风险等级：</strong>{risk_level}</p>
-                                <p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p>
-                                <p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p>
-                            </div>
-                        </span>''')
+                        line_content_parts.append(f'{spacing}<span class="{risk_class}" data-issue-idx="{matching_issue_idx}" onmouseenter="showTooltip(event, \'{tooltip_id}\')" onmouseleave="hideTooltip(\'{tooltip_id}\')">{escaped_text}<div id="{tooltip_id}" class="risk-tooltip"><h4>{_escape_html(issue_type)}</h4><p><strong>风险等级：</strong>{risk_level}</p><p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p><p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p></div></span>')
                     else:
                         # 无匹配，正常显示
                         line_content_parts.append(f'{spacing}<span style="display: inline;">{escaped_text}</span>')
@@ -2137,18 +2130,7 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                     
                     tooltip_id = f"tooltip_{layout_idx}_{block.get('block_id')}_{matching_issue_idx}"
                     
-                    html_content = f'''<span class="{risk_class}" 
-                          data-issue-idx="{matching_issue_idx}"
-                          onmouseenter="showTooltip(event, '{tooltip_id}')"
-                          onmouseleave="hideTooltip('{tooltip_id}')">
-                        {escaped_content}
-                        <div id="{tooltip_id}" class="risk-tooltip">
-                            <h4>{_escape_html(issue_type)}</h4>
-                            <p><strong>风险等级：</strong>{risk_level}</p>
-                            <p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p>
-                            <p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p>
-                        </div>
-                    </span>'''
+                    html_content = f'<span class="{risk_class}" data-issue-idx="{matching_issue_idx}" onmouseenter="showTooltip(event, \'{tooltip_id}\')" onmouseleave="hideTooltip(\'{tooltip_id}\')">{escaped_content}<div id="{tooltip_id}" class="risk-tooltip"><h4>{_escape_html(issue_type)}</h4><p><strong>风险等级：</strong>{risk_level}</p><p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p><p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p></div></span>'
                 else:
                     # 无匹配，正常显示
                     html_content = escaped_content
