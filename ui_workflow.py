@@ -1475,6 +1475,7 @@ def call_online_parse_api(file_path: str) -> Optional[Dict[str, Any]]:
 
 def find_text_positions_in_json(clause_text: str, json_result: Dict[str, Any]) -> List[Dict[str, Any]]:
     """通过文本匹配在JSON中查找条款的位置信息
+    使用条款的最后6个字符进行匹配
     
     Args:
         clause_text: 要查找的条款文本
@@ -1495,6 +1496,12 @@ def find_text_positions_in_json(clause_text: str, json_result: Dict[str, Any]) -
     # 清理条款文本，去除多余空白
     clause_text_clean = " ".join(clause_text.split())
     
+    # 使用条款的最后6个字符进行匹配
+    if len(clause_text_clean) >= 6:
+        search_text = clause_text_clean[-6:]
+    else:
+        search_text = clause_text_clean
+    
     matches = []
     layout_results = json_result.get("layoutParsingResults", [])
     
@@ -1511,38 +1518,20 @@ def find_text_positions_in_json(clause_text: str, json_result: Dict[str, Any]) -
             # 清理块内容
             block_content_clean = " ".join(block_content.split())
             
-            # 尝试精确匹配
-            if clause_text_clean in block_content_clean:
-                match_start = block_content_clean.find(clause_text_clean)
-                match_end = match_start + len(clause_text_clean)
+            # 使用最后6个字符进行匹配
+            if search_text in block_content_clean:
+                match_start = block_content_clean.find(search_text)
+                match_end = match_start + len(search_text)
                 matches.append({
                     "block_id": block.get("block_id"),
                     "block_content": block_content,
                     "block_bbox": block.get("block_bbox", []),
-                    "match_text": clause_text_clean,
+                    "match_text": search_text,
                     "match_start": match_start,
                     "match_end": match_end,
                     "layout_idx": layout_idx,
                     "source": "parsing_res_list"
                 })
-            else:
-                # 尝试部分匹配（如果条款文本较长，尝试匹配子串）
-                if len(clause_text_clean) > 10:
-                    # 尝试匹配前20个字符
-                    prefix = clause_text_clean[:20]
-                    if prefix in block_content_clean:
-                        match_start = block_content_clean.find(prefix)
-                        match_end = min(match_start + len(clause_text_clean), len(block_content_clean))
-                        matches.append({
-                            "block_id": block.get("block_id"),
-                            "block_content": block_content,
-                            "block_bbox": block.get("block_bbox", []),
-                            "match_text": clause_text_clean[:match_end - match_start],
-                            "match_start": match_start,
-                            "match_end": match_end,
-                            "layout_idx": layout_idx,
-                            "source": "parsing_res_list"
-                        })
         
         # 从overall_ocr_res中查找
         overall_ocr = pruned_result.get("overall_ocr_res", {})
@@ -1557,32 +1546,20 @@ def find_text_positions_in_json(clause_text: str, json_result: Dict[str, Any]) -
             
             rec_text_clean = " ".join(rec_text.split())
             
-            if clause_text_clean in rec_text_clean:
+            # 使用最后6个字符进行匹配
+            if search_text in rec_text_clean:
                 box = rec_boxes[idx] if idx < len(rec_boxes) else []
                 poly = rec_polys[idx] if idx < len(rec_polys) else []
+                match_start = rec_text_clean.find(search_text)
+                match_end = match_start + len(search_text)
                 matches.append({
                     "block_id": f"ocr_{idx}",
                     "block_content": rec_text,
                     "block_bbox": box if box else [],
                     "rec_poly": poly,
-                    "match_text": clause_text_clean,
-                    "match_start": 0,
-                    "match_end": len(rec_text_clean),
-                    "layout_idx": layout_idx,
-                    "source": "overall_ocr_res"
-                })
-            elif len(clause_text_clean) > 10 and clause_text_clean[:10] in rec_text_clean:
-                # 部分匹配
-                box = rec_boxes[idx] if idx < len(rec_boxes) else []
-                poly = rec_polys[idx] if idx < len(rec_polys) else []
-                matches.append({
-                    "block_id": f"ocr_{idx}",
-                    "block_content": rec_text,
-                    "block_bbox": box if box else [],
-                    "rec_poly": poly,
-                    "match_text": clause_text_clean[:10],
-                    "match_start": 0,
-                    "match_end": len(rec_text_clean),
+                    "match_text": search_text,
+                    "match_start": match_start,
+                    "match_end": match_end,
                     "layout_idx": layout_idx,
                     "source": "overall_ocr_res"
                 })
@@ -1883,38 +1860,26 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
             padding: 2px 4px;
         }
         .risk-highlight {
-            background-color: #fde2e2;
-            color: #b71c1c;
-            padding: 1px 3px;
-            border-radius: 3px;
             cursor: pointer;
             position: relative;
-            border: 1px solid rgba(244, 67, 54, 0.5);
             display: inline;
-            line-height: 1.3;
-            box-shadow: none;
+            line-height: inherit;
+            font-size: inherit;
+            font-weight: inherit;
+            font-family: inherit;
+            text-align: inherit;
+            margin: 0;
+            padding: 0;
+            vertical-align: baseline;
         }
-        .risk-highlight:hover {
-            background-color: #ffcdd2;
-            box-shadow: 0 1px 3px rgba(244, 67, 54, 0.2);
+        .risk-highlight.risk-high {
+            color: #d32f2f;
         }
-        .risk-medium {
-            background-color: #fff3cd;
-            color: #8a6d3b;
-            border: 1px solid rgba(255, 152, 0, 0.5);
+        .risk-highlight.risk-medium {
+            color: #f57c00;
         }
-        .risk-medium:hover {
-            background-color: #ffe082;
-            box-shadow: 0 1px 3px rgba(255, 152, 0, 0.2);
-        }
-        .risk-low {
-            background-color: #e8f5e9;
-            color: #1b5e20;
-            border: 1px solid rgba(76, 175, 80, 0.5);
-        }
-        .risk-low:hover {
-            background-color: #c8e6c9;
-            box-shadow: 0 1px 3px rgba(76, 175, 80, 0.2);
+        .risk-highlight.risk-low {
+            color: #388e3c;
         }
         .risk-tooltip {
             position: fixed;
@@ -2025,51 +1990,46 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                         else:
                             spacing = " "  # 小间隙用空格
                     
-                    # 检查是否有风险点匹配（更精确的匹配）
-                    matched_issues = []
-                    for issue_idx, issue_data in issue_positions.items():
-                        clause_text = issue_data["issue"].get("条款", "")
-                        if clause_text:
-                            # 清理文本进行比较
-                            clause_clean = "".join(clause_text.split())
-                            text_clean = "".join(text.split())
-                            # 检查是否包含或部分匹配
-                            if clause_clean in text_clean or text_clean in clause_clean:
-                                matched_issues.append({
-                                    "issue": issue_data["issue"],
-                                    "issue_idx": issue_idx
-                                })
-                            # 也检查原始文本（去除空白后）
-                            elif len(clause_text) > 5 and clause_text[:5] in text:
-                                matched_issues.append({
-                                    "issue": issue_data["issue"],
-                                    "issue_idx": issue_idx
-                                })
+                    # 检查当前元素的文本是否匹配风险点
+                    # 如果block文本的长度>3 且 json中的条款contains了这个block中的文本
+                    text_clean = " ".join(text.split())
+                    matching_issue = None
+                    matching_issue_idx = None
+                    
+                    if len(text_clean) > 3:
+                        # 遍历所有风险点，检查条款是否包含这个block文本
+                        for issue_idx, issue_data in issue_positions.items():
+                            clause_text = issue_data["issue"].get("条款", "")
+                            if clause_text:
+                                # 清理条款文本
+                                clause_clean = " ".join(clause_text.split())
+                                # 检查条款是否包含这个block文本
+                                if text_clean in clause_clean:
+                                    matching_issue = issue_data["issue"]
+                                    matching_issue_idx = issue_idx
+                                    break
                     
                     # 构建文本内容
-                    if matched_issues:
-                        # 有风险点，进行标注
-                        risk_level = matched_issues[0]["issue"].get("风险等级", "低")
+                    escaped_text = _escape_html(text)
+                    if matching_issue:
+                        # 有匹配，使用高亮样式（只改变颜色，其他样式保持一致）
+                        risk_level = matching_issue.get("风险等级", "低")
                         risk_class = {
                             "高": "risk-highlight risk-high",
                             "中": "risk-highlight risk-medium",
                             "低": "risk-highlight risk-low"
                         }.get(risk_level, "risk-highlight risk-low")
                         
-                        issue_idx = matched_issues[0]["issue_idx"]
-                        issue_type = matched_issues[0]["issue"].get("类型", "")
-                        issue_desc = matched_issues[0]["issue"].get("问题描述", "")
-                        issue_suggestion = matched_issues[0]["issue"].get("修改建议", "")
+                        issue_type = matching_issue.get("类型", "")
+                        issue_desc = matching_issue.get("问题描述", "")
+                        issue_suggestion = matching_issue.get("修改建议", "")
                         
-                        tooltip_id = f"tooltip_{layout_idx}_{line_idx}_{elem_global_idx}_{issue_idx}"
-                        escaped_text = _escape_html(text)
+                        tooltip_id = f"tooltip_{layout_idx}_{line_idx}_{elem_global_idx}_{matching_issue_idx}"
                         
-                        text_span = f'''
-                        {spacing}<span class="{risk_class}" 
-                              data-issue-idx="{issue_idx}"
+                        line_content_parts.append(f'''{spacing}<span class="{risk_class}" 
+                              data-issue-idx="{matching_issue_idx}"
                               onmouseenter="showTooltip(event, '{tooltip_id}')"
-                              onmouseleave="hideTooltip('{tooltip_id}')"
-                              style="position: relative; display: inline;">
+                              onmouseleave="hideTooltip('{tooltip_id}')">
                             {escaped_text}
                             <div id="{tooltip_id}" class="risk-tooltip">
                                 <h4>{_escape_html(issue_type)}</h4>
@@ -2077,11 +2037,9 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                                 <p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p>
                                 <p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p>
                             </div>
-                        </span>
-                        '''
-                        line_content_parts.append(text_span)
+                        </span>''')
                     else:
-                        escaped_text = _escape_html(text)
+                        # 无匹配，正常显示
                         line_content_parts.append(f'{spacing}<span style="display: inline;">{escaped_text}</span>')
                     
                     prev_elem_end_x = elem_end_x
@@ -2140,86 +2098,68 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                 # 确保字体大小是标准化的（虽然_calculate_font_size_from_bbox已经分类了，但这里再确认一下）
                 _, font_size = _classify_font_size(font_size)
                 
-                # 检查是否有风险点匹配到这个块
-                matched_issues = []
-                for issue_idx, issue_data in issue_positions.items():
-                    for pos in issue_data["positions"]:
-                        if (pos.get("block_id") == block.get("block_id") and 
-                            pos.get("layout_idx") == layout_idx and
-                            pos.get("source") == "parsing_res_list"):
-                            matched_issues.append({
-                                "issue": issue_data["issue"],
-                                "match_start": pos.get("match_start", 0),
-                                "match_end": pos.get("match_end", len(block_content))
-                            })
+                # 清理block内容用于匹配
+                block_content_clean = " ".join(block_content.split())
                 
-                # 如果有匹配的风险点，进行标注
-                if matched_issues:
-                    # 按匹配位置排序
-                    matched_issues.sort(key=lambda x: x["match_start"])
+                # 检查block是否匹配风险点
+                # 如果block文本的长度>3 且 json中的条款contains了这个block中的文本
+                matching_issue = None
+                matching_issue_idx = None
+                
+                if len(block_content_clean) > 3:
+                    # 遍历所有风险点，检查条款是否包含这个block文本
+                    for issue_idx, issue_data in issue_positions.items():
+                        clause_text = issue_data["issue"].get("条款", "")
+                        if clause_text:
+                            # 清理条款文本
+                            clause_clean = " ".join(clause_text.split())
+                            # 检查条款是否包含这个block文本
+                            if block_content_clean in clause_clean:
+                                matching_issue = issue_data["issue"]
+                                matching_issue_idx = issue_idx
+                                break
+                
+                # 构建HTML内容
+                escaped_content = _escape_html(block_content)
+                
+                if matching_issue:
+                    # 有匹配，整个block使用高亮样式（只改变颜色，其他样式保持一致）
+                    risk_level = matching_issue.get("风险等级", "低")
+                    risk_class = {
+                        "高": "risk-highlight risk-high",
+                        "中": "risk-highlight risk-medium",
+                        "低": "risk-highlight risk-low"
+                    }.get(risk_level, "risk-highlight risk-low")
                     
-                    # 构建标注后的HTML
-                    html_content = ""
-                    last_pos = 0
+                    issue_type = matching_issue.get("类型", "")
+                    issue_desc = matching_issue.get("问题描述", "")
+                    issue_suggestion = matching_issue.get("修改建议", "")
                     
-                    for match_info in matched_issues:
-                        # 添加匹配前的文本
-                        if match_info["match_start"] > last_pos:
-                            html_content += _escape_html(block_content[last_pos:match_info["match_start"]])
-                        
-                        # 添加标注的风险文本
-                        risk_level = match_info["issue"].get("风险等级", "低")
-                        risk_class = {
-                            "高": "risk-highlight risk-high",
-                            "中": "risk-highlight risk-medium",
-                            "低": "risk-highlight risk-low"
-                        }.get(risk_level, "risk-highlight risk-low")
-                        
-                        issue_idx = next((i for i, d in issue_positions.items() if d["issue"] == match_info["issue"]), -1)
-                        risk_text = block_content[match_info["match_start"]:match_info["match_end"]]
-                        
-                        issue_type = match_info["issue"].get("类型", "")
-                        issue_desc = match_info["issue"].get("问题描述", "")
-                        issue_suggestion = match_info["issue"].get("修改建议", "")
-                        
-                        tooltip_id = f"tooltip_{layout_idx}_{block.get('block_id')}_{issue_idx}"
-                        html_content += f'''
-                        <span class="{risk_class}" 
-                              data-issue-idx="{issue_idx}"
-                              onmouseenter="showTooltip(event, '{tooltip_id}')"
-                              onmouseleave="hideTooltip('{tooltip_id}')">
-                            {_escape_html(risk_text)}
-                            <div id="{tooltip_id}" class="risk-tooltip">
-                                <h4>{_escape_html(issue_type)}</h4>
-                                <p><strong>风险等级：</strong>{risk_level}</p>
-                                <p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p>
-                                <p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p>
-                            </div>
-                        </span>
-                        '''
-                        
-                        last_pos = match_info["match_end"]
+                    tooltip_id = f"tooltip_{layout_idx}_{block.get('block_id')}_{matching_issue_idx}"
                     
-                    # 添加剩余文本
-                    if last_pos < len(block_content):
-                        html_content += _escape_html(block_content[last_pos:])
-                    
-                    # 根据block_label和字体大小设置样式
-                    if block_label == "doc_title":
-                        html_parts.append(f'<h1 style="text-align: center; margin: 20px 0; font-size: {font_size * 1.5}px;">{html_content}</h1>')
-                    elif block_label == "paragraph_title":
-                        html_parts.append(f'<h2 style="margin: 15px 0 10px 0; font-size: {font_size * 1.2}px;">{html_content}</h2>')
-                    else:
-                        html_parts.append(f'<div class="text-block" style="font-size: {font_size}px;">{html_content}</div>')
+                    html_content = f'''<span class="{risk_class}" 
+                          data-issue-idx="{matching_issue_idx}"
+                          onmouseenter="showTooltip(event, '{tooltip_id}')"
+                          onmouseleave="hideTooltip('{tooltip_id}')">
+                        {escaped_content}
+                        <div id="{tooltip_id}" class="risk-tooltip">
+                            <h4>{_escape_html(issue_type)}</h4>
+                            <p><strong>风险等级：</strong>{risk_level}</p>
+                            <p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p>
+                            <p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p>
+                        </div>
+                    </span>'''
                 else:
-                    # 没有风险点，直接显示
-                    escaped_content = _escape_html(block_content)
-                    if block_label == "doc_title":
-                        html_parts.append(f'<h1 style="text-align: center; margin: 20px 0; font-size: {font_size * 1.5}px;">{escaped_content}</h1>')
-                    elif block_label == "paragraph_title":
-                        html_parts.append(f'<h2 style="margin: 15px 0 10px 0; font-size: {font_size * 1.2}px;">{escaped_content}</h2>')
-                    else:
-                        html_parts.append(f'<div class="text-block" style="font-size: {font_size}px;">{escaped_content}</div>')
+                    # 无匹配，正常显示
+                    html_content = escaped_content
+                
+                # 根据block_label和字体大小设置样式
+                if block_label == "doc_title":
+                    html_parts.append(f'<h1 style="text-align: center; margin: 20px 0; font-size: {font_size * 1.5}px;">{html_content}</h1>')
+                elif block_label == "paragraph_title":
+                    html_parts.append(f'<h2 style="margin: 15px 0 10px 0; font-size: {font_size * 1.2}px;">{html_content}</h2>')
+                else:
+                    html_parts.append(f'<div class="text-block" style="font-size: {font_size}px;">{html_content}</div>')
     
     # 添加JavaScript用于显示/隐藏工具提示
     html_parts.append("""
