@@ -1,17 +1,13 @@
 # contract_workflow.py
-# 基于工作流的合同审查系统
 
 import os
 import json
 import time
-import tempfile
-import base64
 from typing import Dict, List, Optional, Any
 import logging
 from openai import OpenAI
 import requests
 
-# 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -26,7 +22,12 @@ class ContractWorkflow:
             base_url="https://qianfan.baidubce.com/v2",
         )
 
-    def process_contract(self, file_path: str, original_file_name: Optional[str] = None, markdown_text: Optional[str] = None) -> Dict[str, Any]:
+    def process_contract(
+        self,
+        file_path: str,
+        original_file_name: Optional[str] = None,
+        markdown_text: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         主工作流：处理合同文件
         1. 解析文档
@@ -37,29 +38,32 @@ class ContractWorkflow:
         logger.info(f"开始处理合同文件: {file_path}")
 
         try:
-            # 步骤1: 解析文档
             logger.info("步骤1: 解析文档...")
             document_text = self._parse_document(file_path)
             if not document_text:
                 return {"error": "文档解析失败"}
 
-            # 步骤2: 分析风险
             logger.info("步骤2: 分析风险...")
-            # 如果外部提供了markdown（例如OCR布局解析得到的MD），则以其作为基准文本进行风险定位
-            base_text_for_analysis = markdown_text if isinstance(markdown_text, str) and markdown_text.strip() else document_text
+            base_text_for_analysis = (
+                markdown_text
+                if isinstance(markdown_text, str) and markdown_text.strip()
+                else document_text
+            )
             risk_analysis = self._analyze_risks(base_text_for_analysis)
 
-            # 步骤3: 生成建议
             logger.info("步骤3: 生成建议...")
             suggestions = self._generate_suggestions(document_text, risk_analysis)
 
-            # 步骤4: 整合结果
             logger.info("步骤4: 整合结果...")
             result = self._integrate_results(
-                file_path, document_text, risk_analysis, suggestions, original_file_name, base_markdown_text=markdown_text
+                file_path,
+                document_text,
+                risk_analysis,
+                suggestions,
+                original_file_name,
+                base_markdown_text=markdown_text,
             )
 
-            # 保存结果
             self._save_results(result)
 
             logger.info("合同处理完成")
@@ -72,7 +76,6 @@ class ContractWorkflow:
     def _parse_document(self, file_path: str) -> Optional[str]:
         """步骤1: 解析文档获取文本内容"""
         try:
-            # 调用MCP服务解析文档
             response = requests.post(
                 f"{self.mcp_url}/tools/parse_contract",
                 json={"file_path": file_path},
@@ -89,19 +92,14 @@ class ContractWorkflow:
                 logger.error(f"文档解析错误: {result['error']}")
                 return None
 
-            # 处理MCP服务返回的不同格式，统一归一化为纯文本
             raw_content = result.get("content", "")
 
             def extract_text_from_item(item: Any) -> str:
-                """从可能的元素中提取文本。
-                - dict: 优先取 text/content/message 字段
-                - 其他: 转成字符串
-                """
+                """从可能的元素中提取文本"""
                 if isinstance(item, dict):
                     for key in ("text", "content", "message"):
                         if key in item and isinstance(item[key], str):
                             return item[key]
-                    # 常见 OpenAI/MCP 结构：{"type":"text","text":"..."}
                     if item.get("type") == "text" and isinstance(item.get("text"), str):
                         return item["text"]
                     return str(item)
@@ -112,16 +110,13 @@ class ContractWorkflow:
                 else:
                     return str(item)
 
-            # 将 raw_content 归一化为文本：
             if isinstance(raw_content, list):
-                # 典型返回：[{"type":"text","text":"..."}, ...]
                 content = "\n".join(extract_text_from_item(x) for x in raw_content)
             elif isinstance(raw_content, dict):
                 content = extract_text_from_item(raw_content)
             else:
                 content = extract_text_from_item(raw_content)
 
-            # 调试信息
             logger.info(f"MCP返回的content类型: {type(content)}")
             logger.info(
                 f"MCP返回的content长度: {len(content) if isinstance(content, str) else 'N/A'}"
@@ -142,18 +137,15 @@ class ContractWorkflow:
         """步骤2: 分析合同风险"""
         logger.info("开始风险分析...")
 
-        # 并行分析三种风险
         legal_risks = self._analyze_legal_risks(document_text)
         business_risks = self._analyze_business_risks(document_text)
         format_issues = self._analyze_format_issues(document_text)
 
-        # 整合所有风险
         all_issues = []
         all_issues.extend(legal_risks)
         all_issues.extend(business_risks)
         all_issues.extend(format_issues)
 
-        # 计算风险统计
         risk_stats = self._calculate_risk_statistics(all_issues)
 
         return {
@@ -273,7 +265,6 @@ class ContractWorkflow:
                 if isinstance(result, list):
                     return result
                 elif isinstance(result, dict):
-                    # 如果返回的是字典，尝试提取数组
                     for value in result.values():
                         if isinstance(value, list):
                             return value
@@ -298,21 +289,17 @@ class ContractWorkflow:
         }
 
         for issue in issues:
-            # 按风险等级统计
             risk_level = issue.get("风险等级", "低")
             if risk_level in stats["by_level"]:
                 stats["by_level"][risk_level] += 1
 
-            # 按类型统计
             issue_type = issue.get("类型", "").split()[0]
             if issue_type in stats["by_type"]:
                 stats["by_type"][issue_type] += 1
 
-            # 统计违法条款
             if "违法" in issue.get("类型", "") or "违规" in issue.get("类型", ""):
                 stats["illegal_clauses"] += 1
 
-        # 计算风险评分
         risk_score = self._calculate_risk_score(issues)
         stats["risk_score"] = risk_score
         stats["risk_level"] = (
@@ -326,10 +313,7 @@ class ContractWorkflow:
         if not issues:
             return 0.0
 
-        # 风险权重
         weights = {"高": 1.0, "中": 0.6, "低": 0.3}
-
-        # 类型权重
         type_weights = {"法律风险": 1.0, "商业风险": 0.8, "格式问题": 0.5}
 
         total_score = 0
@@ -339,16 +323,13 @@ class ContractWorkflow:
             risk_weight = weights.get(issue.get("风险等级", "低"), 0.3)
             type_weight = type_weights.get(issue.get("类型", "").split()[0], 0.5)
 
-            # 计算该问题的风险分数
             issue_score = risk_weight * type_weight * 100
 
             total_score += issue_score
-            max_possible_score += 100  # 最高可能分数
+            max_possible_score += 100
 
-        # 归一化到0-100范围，并适度上调整体评分
         if max_possible_score > 0:
             base_score = (total_score / max_possible_score) * 100
-            # 适度提高评分：放大系数1.25，最高不超过100
             adjusted_score = min(base_score * 1.5, 100.0)
             return round(adjusted_score, 2)
         return 0.0
@@ -474,7 +455,11 @@ class ContractWorkflow:
 
         return {
             "file_path": file_path,
-            "original_file_name": original_file_name if original_file_name else os.path.basename(file_path),
+            "original_file_name": (
+                original_file_name
+                if original_file_name
+                else os.path.basename(file_path)
+            ),
             "document_text": document_text,
             "base_markdown_text": base_markdown_text,
             "risk_analysis": risk_analysis,
@@ -540,10 +525,7 @@ def main():
         print(f"文件不存在: {file_path}")
         sys.exit(1)
 
-    # 创建工作流实例
     workflow = ContractWorkflow()
-
-    # 处理合同
     result = workflow.process_contract(file_path)
 
     if "error" in result:

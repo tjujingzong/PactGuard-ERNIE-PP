@@ -9,7 +9,6 @@ import sys
 import time
 import requests
 import os
-from pathlib import Path
 
 
 def check_mcp_service():
