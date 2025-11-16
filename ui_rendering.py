@@ -722,30 +722,31 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
             position: fixed;
             background: #333;
             color: #fff;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 12px;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 14px;
             z-index: 10000;
-            max-width: 350px;
+            max-width: 380px;
             display: none;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
             pointer-events: none;
             word-wrap: break-word;
+            line-height: 1.6;
         }
         .risk-tooltip.show {
             display: block;
         }
         .risk-tooltip h4 {
-            margin: 0 0 5px 0;
-            font-size: 14px;
-            color: #ffcdd2;
+            margin: 0 0 8px 0;
+            font-size: 16px;
+            color: #ef9a9a;
             border-bottom: 1px solid #555;
-            padding-bottom: 5px;
+            padding-bottom: 8px;
         }
         .risk-tooltip p {
-            margin: 5px 0;
-            font-size: 12px;
-            line-height: 1.5;
+            margin: 8px 0;
+            font-size: 14px;
+            line-height: 1.6;
         }
     </style>
     <div class="document-container">
@@ -961,7 +962,7 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                         tooltip_id = f"tooltip_{layout_idx}_{line_idx}_{elem_global_idx}_{matching_issue_idx}"
 
                         line_content_parts.append(
-                            f'{spacing}<span class="{risk_class}" data-issue-idx="{matching_issue_idx}" onmouseenter="showTooltip(event, \'{tooltip_id}\'); highlightIssue({matching_issue_idx})" onmouseleave="hideTooltip(\'{tooltip_id}\'); unhighlightIssue()">{escaped_text}<div id="{tooltip_id}" class="risk-tooltip"><h4>{_escape_html(issue_type)}</h4><p><strong>风险等级：</strong>{risk_level}</p><p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p><p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p></div></span>'
+                            f'{spacing}<span class="{risk_class}" data-issue-idx="{matching_issue_idx}" onmouseenter="showTooltip(event, \'{tooltip_id}\')" onmouseleave="hideTooltip(\'{tooltip_id}\')">{escaped_text}<div id="{tooltip_id}" class="risk-tooltip"><h4>{_escape_html(issue_type)}</h4><p><strong>风险等级：</strong>{risk_level}</p><p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p><p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p></div></span>'
                         )
                     else:
                         line_content_parts.append(
@@ -1062,7 +1063,7 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
 
                     tooltip_id = f"tooltip_{layout_idx}_{block.get('block_id')}_{matching_issue_idx}"
 
-                    html_content = f'<span class="{risk_class}" data-issue-idx="{matching_issue_idx}" onmouseenter="showTooltip(event, \'{tooltip_id}\'); highlightIssue({matching_issue_idx})" onmouseleave="hideTooltip(\'{tooltip_id}\'); unhighlightIssue()">{escaped_content}<div id="{tooltip_id}" class="risk-tooltip"><h4>{_escape_html(issue_type)}</h4><p><strong>风险等级：</strong>{risk_level}</p><p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p><p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p></div></span>'
+                    html_content = f'<span class="{risk_class}" data-issue-idx="{matching_issue_idx}" onmouseenter="showTooltip(event, \'{tooltip_id}\')" onmouseleave="hideTooltip(\'{tooltip_id}\')">{escaped_content}<div id="{tooltip_id}" class="risk-tooltip"><h4>{_escape_html(issue_type)}</h4><p><strong>风险等级：</strong>{risk_level}</p><p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p><p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p></div></span>'
                 else:
                     html_content = escaped_content
 
@@ -1082,52 +1083,48 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
     html_parts.append(
         """
     <script>
-        function showTooltip(event, tooltipId) {
+        // 确保函数在全局作用域中定义
+        window.showTooltip = function(event, tooltipId) {
             const tooltip = document.getElementById(tooltipId);
             if (tooltip) {
                 tooltip.classList.add('show');
                 const rect = event.target.getBoundingClientRect();
                 const tooltipRect = tooltip.getBoundingClientRect();
-                let left = rect.left + rect.width / 2 - tooltipRect.width / 2;
-                let top = rect.top - tooltipRect.height - 10;
                 
-                if (left < 10) {
-                    left = 10;
+                // 默认显示在右侧，并垂直居中
+                let left = rect.right + 15; // 15px 偏移量
+                let top = rect.top + rect.height / 2 - tooltipRect.height / 2;
+
+                // 如果右侧空间不足，则显示在左侧
+                if (left + tooltipRect.width > window.innerWidth - 15) {
+                    left = rect.left - tooltipRect.width - 15;
                 }
-                if (left + tooltipRect.width > window.innerWidth - 10) {
-                    left = window.innerWidth - tooltipRect.width - 10;
+
+                // 左侧边界检查
+                if (left < 15) {
+                    left = 15;
                 }
-                if (top < 10) {
-                    top = rect.bottom + 10;
+
+                // 上下边界检查
+                if (top < 15) {
+                    top = 15;
+                }
+                if (top + tooltipRect.height > window.innerHeight - 15) {
+                    top = window.innerHeight - tooltipRect.height - 15;
                 }
                 
                 tooltip.style.left = left + 'px';
                 tooltip.style.top = top + 'px';
             }
-        }
-        function hideTooltip(tooltipId) {
+        };
+        
+        window.hideTooltip = function(tooltipId) {
             const tooltip = document.getElementById(tooltipId);
             if (tooltip) {
                 tooltip.classList.remove('show');
             }
-        }
-        function highlightIssue(issueIdx) {
-            // 通过postMessage发送消息到父窗口
-            if (window.parent && window.parent !== window) {
-                window.parent.postMessage({
-                    type: 'highlight_issue',
-                    issueIdx: issueIdx
-                }, '*');
-            }
-        }
-        function unhighlightIssue() {
-            // 通过postMessage发送消息到父窗口
-            if (window.parent && window.parent !== window) {
-                window.parent.postMessage({
-                    type: 'unhighlight_issue'
-                }, '*');
-            }
-        }
+        };
+        
     </script>
     </div>
     """

@@ -299,92 +299,6 @@ st.markdown(
     }
     
 </style>
-<script>
-(function() {
-    let currentHoveredIdx = null;
-    let checkInterval = null;
-    
-    function updateExpanders() {
-        // 等待DOM更新
-        setTimeout(function() {
-            // 查找所有包含issue索引的隐藏div
-            const issueIdxElements = document.querySelectorAll('div[data-issue-idx]');
-            issueIdxElements.forEach((idxElement) => {
-                const issueIdx = parseInt(idxElement.getAttribute('data-issue-idx'));
-                if (currentHoveredIdx === issueIdx) {
-                    // 找到对应的expander
-                    // 方法1：在隐藏div的父容器中查找
-                    let container = idxElement.parentElement;
-                    while (container) {
-                        const expander = container.querySelector('[data-testid*="stExpander"]');
-                        if (expander) {
-                            const button = expander.querySelector('button[data-testid*="baseButton"]');
-                            if (button) {
-                                // 直接展开expander，不再检查按钮文本
-                                if (button.getAttribute('aria-expanded') !== 'true') {
-                                    button.click();
-                                }
-                                return;
-                            }
-                        }
-                        // 方法2：在隐藏div的兄弟元素中查找
-                        let sibling = idxElement.nextElementSibling;
-                        while (sibling) {
-                            const expander = sibling.querySelector('[data-testid*="stExpander"]');
-                            if (expander) {
-                                const button = expander.querySelector('button[data-testid*="baseButton"]');
-                                if (button) {
-                                    // 直接展开expander，不再检查按钮文本
-                                    if (button.getAttribute('aria-expanded') !== 'true') {
-                                        button.click();
-                                    }
-                                    return;
-                                }
-                            }
-                            sibling = sibling.nextElementSibling;
-                        }
-                        container = container.parentElement;
-                        // 限制查找深度，避免无限循环
-                        if (!container || container === document.body) break;
-                    }
-                }
-            });
-        }, 100);
-    }
-    
-    function startChecking() {
-        if (checkInterval) return;
-        checkInterval = setInterval(function() {
-            if (currentHoveredIdx !== null) {
-                updateExpanders();
-            } else {
-                clearInterval(checkInterval);
-                checkInterval = null;
-            }
-        }, 300);
-    }
-    
-    function stopChecking() {
-        if (checkInterval) {
-            clearInterval(checkInterval);
-            checkInterval = null;
-        }
-    }
-    
-    // 监听来自iframe的消息
-    window.addEventListener('message', function(event) {
-        if (event.data && event.data.type === 'highlight_issue') {
-            const issueIdx = event.data.issueIdx;
-            currentHoveredIdx = issueIdx;
-            startChecking();
-            updateExpanders();
-        } else if (event.data && event.data.type === 'unhighlight_issue') {
-            currentHoveredIdx = null;
-            stopChecking();
-        }
-    });
-})();
-</script>
 """,
     unsafe_allow_html=True,
 )
@@ -657,19 +571,6 @@ def main():
 
                     if filtered_issues:
                         st.markdown("---")
-                        # 建立filtered_issues到all_issues的索引映射
-                        issue_index_map = {}
-                        for filtered_idx, filtered_issue in enumerate(filtered_issues):
-                            for all_idx, all_issue in enumerate(all_issues):
-                                # 通过比较关键字段来匹配
-                                if (filtered_issue.get("条款") == all_issue.get("条款") and
-                                    filtered_issue.get("类型") == all_issue.get("类型") and
-                                    filtered_issue.get("问题描述") == all_issue.get("问题描述")):
-                                    issue_index_map[filtered_idx] = all_idx
-                                    break
-                        
-                        # 获取当前悬停的issue索引（在all_issues中的索引）
-                        hovered_issue_idx = st.session_state.get("hovered_issue_idx", None)
                         
                         for i, issue in enumerate(filtered_issues, 1):
                             risk_level = issue.get("风险等级", "低")
@@ -685,21 +586,10 @@ def main():
                                 risk_color = "🟢"
                                 risk_label = "低风险"
 
-                            with st.container():
-                                # 获取当前issue在all_issues中的索引
-                                current_issue_idx = issue_index_map.get(i - 1, None)
-                                # 在容器外部添加隐藏的标识元素，用于JavaScript识别（即使expander折叠也能找到）
-                                if current_issue_idx is not None:
-                                    st.markdown(f'<div data-issue-idx="{current_issue_idx}" style="display:none;"></div>', unsafe_allow_html=True)
-
-                                # 如果当前悬停的issue索引匹配，则展开
-                                is_expanded = (hovered_issue_idx is not None and 
-                                             current_issue_idx is not None and 
-                                             hovered_issue_idx == current_issue_idx)
-                                
-                                # 将风险类型和风险等级合并到expander标题中
-                                expander_title = f"{risk_color} {issue_type} {risk_label}"
-                                with st.expander(expander_title, expanded=is_expanded):
+                            # 将风险类型和风险等级合并到expander标题中
+                            expander_title = f"{risk_color} {issue_type} {risk_label}"
+                            
+                            with st.expander(expander_title):
                                     st.write(
                                         f"**条款位置：** {issue.get('条款', 'N/A')}"
                                     )
