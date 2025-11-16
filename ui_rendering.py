@@ -649,13 +649,17 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
             position: relative;
             max-width: 100%;
             margin: 0 auto;
-            padding: 20px;
+            padding: 10px;
             background: #fff;
             min-height: 100vh;
+            box-sizing: border-box;
+            overflow-x: hidden;
+            overflow-y: auto;
         }
         .page-wrapper {
             position: relative;
             margin: 0 auto 40px;
+            max-width: 100%;
             width: __A4_WIDTH__px;
             height: __A4_HEIGHT__px;
             border: 1px solid #e0e0e0;
@@ -663,20 +667,32 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
             background-color: #fff;
             box-shadow: 0 6px 18px rgba(0,0,0,0.08);
             overflow: hidden;
+            box-sizing: border-box;
+        }
+        @media (max-width: 850px) {
+            .page-wrapper {
+                width: 100% !important;
+                height: auto !important;
+                aspect-ratio: __A4_WIDTH__ / __A4_HEIGHT__;
+            }
+            .document-container {
+                padding: 5px;
+            }
         }
         .text-element {
             position: absolute;
             white-space: pre-wrap;
             word-wrap: break-word;
-            line-height: 1.2;
+            line-height: 1.0;
             overflow: visible;
         }
         .text-block {
             position: relative;
-            margin: 5px 0;
-            padding: 2px 4px;
+            margin: 2px 0;
+            padding: 1px 4px;
             text-align: left;
-            line-height: 1.5;
+            line-height: 1.2;
+            /* font-size 由内联样式控制，根据block_label动态设置 */
         }
         .risk-highlight {
             cursor: pointer;
@@ -756,6 +772,26 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
             if not text_lines:
                 continue
 
+            # 获取block信息用于匹配block_label
+            pruned_result = layout_result.get("prunedResult", {})
+            parsing_list = pruned_result.get("parsing_res_list", [])
+            blocks_by_text = {}
+            blocks_by_bbox = []  # 存储带bbox的block，用于位置匹配
+            for block in parsing_list:
+                block_content = block.get("block_content", "").strip()
+                if block_content:
+                    # 使用清理后的文本作为key
+                    block_content_clean = " ".join(block_content.split())
+                    if block_content_clean:
+                        blocks_by_text[block_content_clean] = block
+                # 同时存储带bbox的block用于位置匹配
+                block_bbox = block.get("block_bbox", [])
+                if block_bbox and len(block_bbox) >= 4:
+                    blocks_by_bbox.append({
+                        "block": block,
+                        "bbox": block_bbox  # [x, y, width, height] 或 [x1, y1, x2, y2]
+                    })
+
             max_x = max(
                 [line["x"] + line["width"] for line in text_lines], default=A4_WIDTH_PX
             )
@@ -779,17 +815,100 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
             scale = min(width_scale, height_scale)
             if scale <= 0:
                 scale = 1.0
-            min_font_size = 10.0
+            min_font_size = 12.0
 
             html_parts.append(
                 f'<div class="page-wrapper" style="width: {A4_WIDTH_PX}px; height: {A4_HEIGHT_PX}px;">'
             )
 
+            # 确保文本行按 y 坐标排序（从上到下），如果 y 坐标相同则按 x 坐标排序（从左到右）
+            text_lines.sort(key=lambda l: (l["y"], l["x"]))
+
             for line_idx, line in enumerate(text_lines):
                 line_y = line["y"] * scale
                 line_x = line["x"] * scale
                 line_width = line["width"] * scale
-                line_font_size = max(min_font_size, line["font_size"] * scale)
+                
+                # 尝试匹配block_label
+                line_text = "".join([elem["text"] for elem in line["elements"]])
+                line_text_clean = " ".join(line_text.split())
+                matched_block = None
+                
+                # 首先尝试文本匹配
+                if line_text_clean:
+                    # 尝试完全匹配
+                    if line_text_clean in blocks_by_text:
+                        matched_block = blocks_by_text[line_text_clean]
+                    else:
+                        # 尝试部分匹配
+                        for block_text, block in blocks_by_text.items():
+                            if line_text_clean in block_text or block_text in line_text_clean:
+                                matched_block = block
+                                break
+                
+                # 如果文本匹配失败，尝试基于位置（bbox）匹配
+                # 这对于多行doc_title特别有用
+                if not matched_block:
+                    line_center_x = line_x + line_width / 2
+                    line_center_y = line_y + (line.get("height", 0) * scale) / 2
+                    
+                    for bbox_item in blocks_by_bbox:
+                        bbox = bbox_item["bbox"]
+                        block = bbox_item["block"]
+                        block_label = block.get("block_label", "")
+                        
+                        # 判断bbox格式：根据JSON，通常是 [x1, y1, x2, y2] 格式
+                        if len(bbox) >= 4:
+                            # 检查是否是 [x, y, width, height] 格式（width和height应该小于x和y的值）
+                            # 或者直接假设是 [x1, y1, x2, y2] 格式（更常见）
+                            if bbox[2] > bbox[0] and bbox[3] > bbox[1]:
+                                # [x1, y1, x2, y2] 格式
+                                x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                            else:
+                                # [x, y, width, height] 格式
+                                x1, y1 = bbox[0], bbox[1]
+                                x2, y2 = x1 + bbox[2], y1 + bbox[3]
+                            
+                            # 缩放bbox以匹配缩放后的坐标
+                            bbox_x1 = x1 * scale
+                            bbox_y1 = y1 * scale
+                            bbox_x2 = x2 * scale
+                            bbox_y2 = y2 * scale
+                            
+                            # 检查行的中心点是否在block的bbox内，或者行与block有重叠
+                            line_x_scaled = line_x
+                            line_y_scaled = line_y
+                            line_w_scaled = line_width
+                            line_h_scaled = line.get("height", 0) * scale
+                            
+                            # 检查是否有重叠（允许一些容差）
+                            tolerance = 20 * scale
+                            if (line_center_x >= bbox_x1 - tolerance and 
+                                line_center_x <= bbox_x2 + tolerance and
+                                line_center_y >= bbox_y1 - tolerance and 
+                                line_center_y <= bbox_y2 + tolerance):
+                                matched_block = block
+                                break
+                            # 或者检查行是否与block有重叠
+                            elif not (line_x_scaled + line_w_scaled < bbox_x1 - tolerance or
+                                     line_x_scaled > bbox_x2 + tolerance or
+                                     line_y_scaled + line_h_scaled < bbox_y1 - tolerance or
+                                     line_y_scaled > bbox_y2 + tolerance):
+                                matched_block = block
+                                break
+                
+                # 根据block_label调整字体大小
+                base_font_size = max(min_font_size, line["font_size"] * scale * 1.2)
+                if matched_block:
+                    block_label = matched_block.get("block_label", "text")
+                    if block_label == "doc_title":
+                        # 对于doc_title，使用较大的字体
+                        base_font_size = max(28.0, base_font_size * 1.5)
+                    elif block_label == "paragraph_title":
+                        base_font_size = 18
+                    # text和其他类型保持原样
+                
+                line_font_size = base_font_size
                 line_alignment = line["alignment"]
 
                 line_content_parts = []
@@ -842,7 +961,7 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                         tooltip_id = f"tooltip_{layout_idx}_{line_idx}_{elem_global_idx}_{matching_issue_idx}"
 
                         line_content_parts.append(
-                            f'{spacing}<span class="{risk_class}" data-issue-idx="{matching_issue_idx}" onmouseenter="showTooltip(event, \'{tooltip_id}\')" onmouseleave="hideTooltip(\'{tooltip_id}\')">{escaped_text}<div id="{tooltip_id}" class="risk-tooltip"><h4>{_escape_html(issue_type)}</h4><p><strong>风险等级：</strong>{risk_level}</p><p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p><p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p></div></span>'
+                            f'{spacing}<span class="{risk_class}" data-issue-idx="{matching_issue_idx}" onmouseenter="showTooltip(event, \'{tooltip_id}\'); highlightIssue({matching_issue_idx})" onmouseleave="hideTooltip(\'{tooltip_id}\'); unhighlightIssue()">{escaped_text}<div id="{tooltip_id}" class="risk-tooltip"><h4>{_escape_html(issue_type)}</h4><p><strong>风险等级：</strong>{risk_level}</p><p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p><p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p></div></span>'
                         )
                     else:
                         line_content_parts.append(
@@ -868,7 +987,8 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                 else:
                     tag = "div"
 
-                style = f"left: {line_x}px; top: {line_y}px; font-size: {line_font_size}px; text-align: {text_align}; width: {line_width}px; position: absolute;"
+                # 调整样式，减小行间距，增大字体
+                style = f"left: {line_x}px; top: {line_y}px; font-size: {line_font_size}px; text-align: {text_align}; width: {line_width}px; position: absolute; line-height: 1.0; margin: 0; padding: 0;"
 
                 if tag in ["h2", "h3"]:
                     html_parts.append(
@@ -898,10 +1018,18 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
                 if not block_content:
                     continue
 
-                font_size = (
-                    _calculate_font_size_from_bbox(block_bbox) if block_bbox else 14.0
-                )
-                _, font_size = _classify_font_size(font_size)
+                # 根据block_label设置不同的基础字体大小
+                if block_label == "doc_title":
+                    base_font_size = 28.0  # 文档标题使用较大字体
+                elif block_label == "paragraph_title":
+                    base_font_size = 16.0  # 段落标题使用中等字体
+                else:
+                    # 对于普通文本，根据bbox计算字体大小，如果没有bbox则使用默认值
+                    if block_bbox:
+                        calculated_size = _calculate_font_size_from_bbox(block_bbox)
+                        base_font_size = max(14.0, calculated_size)
+                    else:
+                        base_font_size = 14.0
 
                 block_content_clean = " ".join(block_content.split())
 
@@ -934,21 +1062,21 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
 
                     tooltip_id = f"tooltip_{layout_idx}_{block.get('block_id')}_{matching_issue_idx}"
 
-                    html_content = f'<span class="{risk_class}" data-issue-idx="{matching_issue_idx}" onmouseenter="showTooltip(event, \'{tooltip_id}\')" onmouseleave="hideTooltip(\'{tooltip_id}\')">{escaped_content}<div id="{tooltip_id}" class="risk-tooltip"><h4>{_escape_html(issue_type)}</h4><p><strong>风险等级：</strong>{risk_level}</p><p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p><p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p></div></span>'
+                    html_content = f'<span class="{risk_class}" data-issue-idx="{matching_issue_idx}" onmouseenter="showTooltip(event, \'{tooltip_id}\'); highlightIssue({matching_issue_idx})" onmouseleave="hideTooltip(\'{tooltip_id}\'); unhighlightIssue()">{escaped_content}<div id="{tooltip_id}" class="risk-tooltip"><h4>{_escape_html(issue_type)}</h4><p><strong>风险等级：</strong>{risk_level}</p><p><strong>问题描述：</strong>{_escape_html(issue_desc)}</p><p><strong>修改建议：</strong>{_escape_html(issue_suggestion)}</p></div></span>'
                 else:
                     html_content = escaped_content
 
                 if block_label == "doc_title":
                     html_parts.append(
-                        f'<h1 style="text-align: center; margin: 20px 0; font-size: {font_size * 1.5}px;">{html_content}</h1>'
+                        f'<h1 style="text-align: center; margin: 15px 0; font-size: {base_font_size}px; line-height: 1.2;">{html_content}</h1>'
                     )
                 elif block_label == "paragraph_title":
                     html_parts.append(
-                        f'<h2 style="margin: 15px 0 10px 0; font-size: {font_size * 1.2}px;">{html_content}</h2>'
+                        f'<h2 style="margin: 10px 0 5px 0; font-size: {base_font_size}px; line-height: 1.2;">{html_content}</h2>'
                     )
                 else:
                     html_parts.append(
-                        f'<div class="text-block" style="font-size: {font_size}px;">{html_content}</div>'
+                        f'<div class="text-block" style="font-size: {base_font_size}px; line-height: 1.2;">{html_content}</div>'
                     )
 
     html_parts.append(
@@ -981,6 +1109,23 @@ def generate_html_layout(json_result: Dict[str, Any], issues: List[Dict]) -> str
             const tooltip = document.getElementById(tooltipId);
             if (tooltip) {
                 tooltip.classList.remove('show');
+            }
+        }
+        function highlightIssue(issueIdx) {
+            // 通过postMessage发送消息到父窗口
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'highlight_issue',
+                    issueIdx: issueIdx
+                }, '*');
+            }
+        }
+        function unhighlightIssue() {
+            // 通过postMessage发送消息到父窗口
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'unhighlight_issue'
+                }, '*');
             }
         }
     </script>
@@ -1027,7 +1172,7 @@ def render_risk_analysis(risk_analysis: Dict[str, Any]):
     # 风险统计
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("总问题数", statistics.get("total_issues", 0))
+        st.metric("问题数", statistics.get("total_issues", 0))
     with col2:
         st.metric("高风险", statistics.get("by_level", {}).get("高", 0))
     with col3:
@@ -1118,7 +1263,7 @@ def render_suggestions(suggestions: Dict[str, Any]):
     with col1:
         st.metric("风险评分", f"{summary.get('risk_score', 0)}/100")
     with col2:
-        st.metric("总问题数", summary.get("total_issues", 0))
+        st.metric("问题数", summary.get("total_issues", 0))
     with col3:
         st.metric("违法条款", summary.get("illegal_clauses", 0))
 

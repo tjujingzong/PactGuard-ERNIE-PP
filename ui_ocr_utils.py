@@ -294,7 +294,8 @@ def _extract_ocr_text_elements(layout_result: Dict[str, Any]) -> List[Dict[str, 
                 or abs(elem_y - line_y) > (line_height or elem_height) * 1.5
             ):
                 if current_line:
-                    current_line.sort(key=lambda e: e["x"])
+                    # 先按 y 坐标排序（从上到下），再按 x 坐标排序（从左到右）
+                    current_line.sort(key=lambda e: (e["y"], e["x"]))
                     avg_font_size = sum(e["font_size"] for e in current_line) / len(
                         current_line
                     )
@@ -324,7 +325,8 @@ def _extract_ocr_text_elements(layout_result: Dict[str, Any]) -> List[Dict[str, 
                 line_height = max(line_height or elem_height, elem_height)
 
         if current_line:
-            current_line.sort(key=lambda e: e["x"])
+            # 先按 y 坐标排序（从上到下），再按 x 坐标排序（从左到右）
+            current_line.sort(key=lambda e: (e["y"], e["x"]))
             avg_font_size = sum(e["font_size"] for e in current_line) / len(
                 current_line
             )

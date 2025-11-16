@@ -139,19 +139,16 @@ class ContractWorkflow:
 
         legal_risks = self._analyze_legal_risks(document_text)
         business_risks = self._analyze_business_risks(document_text)
-        format_issues = self._analyze_format_issues(document_text)
 
         all_issues = []
         all_issues.extend(legal_risks)
         all_issues.extend(business_risks)
-        all_issues.extend(format_issues)
 
         risk_stats = self._calculate_risk_statistics(all_issues)
 
         return {
             "legal_risks": legal_risks,
             "business_risks": business_risks,
-            "format_issues": format_issues,
             "all_issues": all_issues,
             "statistics": risk_stats,
         }
@@ -216,31 +213,6 @@ class ContractWorkflow:
 
         return self._call_llm_for_analysis(system_prompt, text, "商业风险")
 
-    def _analyze_format_issues(self, text: str) -> List[Dict]:
-        """分析格式问题"""
-        system_prompt = """
-        你是一位合同格式规范专家，负责审查合同的格式和完整性。你需要：
-        1. 检查合同结构的完整性
-        2. 检查章节标题的规范性
-        3. 检查条款编号的连续性
-        4. 检查格式的一致性
-        5. 给出具体的修改建议
-        
-        输出格式必须是JSON数组，每个问题包含以下字段：
-        {
-            "类型": "格式问题",
-            "条款": "具体位置描述或相关文本",
-            "问题描述": "格式问题描述",
-            "风险等级": "高/中/低",
-            "修改建议": "具体修改建议"
-        }
-        
-        特别注意：
-        "条款"字段应包含相关的位置描述或文本内容，以便后续进行文本匹配定位
-        """
-
-        return self._call_llm_for_analysis(system_prompt, text, "格式问题")
-
     def _call_llm_for_analysis(
         self, system_prompt: str, text: str, analysis_type: str
     ) -> List[Dict]:
@@ -284,7 +256,7 @@ class ContractWorkflow:
         stats = {
             "total_issues": len(issues),
             "by_level": {"高": 0, "中": 0, "低": 0},
-            "by_type": {"法律风险": 0, "商业风险": 0, "格式问题": 0},
+            "by_type": {"法律风险": 0, "商业风险": 0},
             "illegal_clauses": 0,
         }
 
@@ -314,7 +286,7 @@ class ContractWorkflow:
             return 0.0
 
         weights = {"高": 1.0, "中": 0.6, "低": 0.3}
-        type_weights = {"法律风险": 1.0, "商业风险": 0.8, "格式问题": 0.5}
+        type_weights = {"法律风险": 1.0, "商业风险": 0.8}
 
         total_score = 0
         max_possible_score = 0
@@ -362,7 +334,7 @@ class ContractWorkflow:
             "summary": {
                 "risk_score": "风险评分(0-100)",
                 "risk_level": "风险等级(高/中/低)",
-                "total_issues": "总问题数",
+                "total_issues": "问题数",
                 "high_risk": "高风险问题数",
                 "medium_risk": "中风险问题数",
                 "low_risk": "低风险问题数",
@@ -533,7 +505,7 @@ def main():
         sys.exit(1)
 
     print("处理完成！")
-    print(f"总问题数: {result['risk_analysis']['statistics']['total_issues']}")
+    print(f"问题数: {result['risk_analysis']['statistics']['total_issues']}")
     print(f"风险评分: {result['risk_analysis']['statistics']['risk_score']}")
     print(f"风险等级: {result['risk_analysis']['statistics']['risk_level']}")
 
