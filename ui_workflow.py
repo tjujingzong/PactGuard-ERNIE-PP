@@ -314,6 +314,35 @@ def main():
     button_placeholder = button_col.empty()
 
     with st.sidebar:
+        st.markdown("### 🔧 接口配置")
+        st.text_input(
+            "大模型接口地址 (https://cloud.baidu.com/product-s/qianfan_home)",
+            key="llm_api_base_url",
+            placeholder="https://qianfan.baidubce.com/****",
+            help="填写兼容OpenAI协议的大模型HTTP地址",
+        )
+        st.text_input(
+            "大模型 API Key",
+            key="llm_api_key",
+            placeholder="bce-v3/***",
+            type="password",
+            help="只保存在当前会话内，请勿泄露",
+        )
+        st.text_input(
+            "OCR 接口地址 (https://aistudio.baidu.com/paddleocr/task)",
+            key="ocr_api_url",
+            placeholder="https://*****.aistudio-app.com/layout-parsing",
+            help="支持自定义布局解析服务HTTP地址",
+        )
+        st.text_input(
+            "OCR 访问令牌 (https://aistudio.baidu.com/account/accessToken)",
+            key="ocr_api_token",
+            placeholder="token",
+            type="password",
+            help="如果接口需要鉴权，请填写对应token",
+        )
+        st.divider()
+
         st.markdown("### 📁 文件选择")
 
         # 创建选项卡

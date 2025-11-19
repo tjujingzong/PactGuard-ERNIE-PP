@@ -15,11 +15,22 @@ logger = logging.getLogger(__name__)
 class ContractWorkflow:
     """合同审查工作流类"""
 
-    def __init__(self, mcp_url: str = "http://localhost:7001"):
+    def __init__(
+        self,
+        mcp_url: str = "http://localhost:7001",
+        llm_api_key: Optional[str] = None,
+        llm_api_base_url: Optional[str] = None,
+    ):
         self.mcp_url = mcp_url
+        api_key = (llm_api_key or os.environ.get("LLM_API_KEY", "")).strip()
+        base_url = (llm_api_base_url or os.environ.get("LLM_API_BASE_URL", "")).strip()
+
+        if not api_key or not base_url:
+            raise ValueError("未配置大模型接口，请在界面或环境变量中设置后重试")
+
         self.llm_client = OpenAI(
-            api_key="bce-v3/ALTAK-IS6uG1qXcgDDP9RrmjYD9/ede55d516092e0ca5e9041eab19455df12c7db7f",
-            base_url="https://qianfan.baidubce.com/v2",
+            api_key=api_key,
+            base_url=base_url,
         )
 
     def process_contract(

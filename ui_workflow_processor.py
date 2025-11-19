@@ -11,7 +11,10 @@ def process_contract_workflow(file_path: str):
         st.session_state.processing_status = "processing"
 
         # 创建工作流实例
-        workflow = ContractWorkflow()
+        workflow = ContractWorkflow(
+            llm_api_base_url=st.session_state.get("llm_api_base_url"),
+            llm_api_key=st.session_state.get("llm_api_key"),
+        )
 
         # 步骤1: 文档解析/分析
         with st.spinner("正在解析文档并分析..."):

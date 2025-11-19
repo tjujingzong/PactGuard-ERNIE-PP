@@ -18,23 +18,37 @@ A4_HEIGHT_PX = 1123
 def call_online_parse_api(file_path: str) -> Optional[Dict[str, Any]]:
     """调用布局解析在线API，并返回markdown和原始JSON"""
     original_file_name = st.session_state.get("file_name")
+    api_url = (
+        st.session_state.get("ocr_api_url")
+        or os.getenv("OCR_API_URL", "").strip()
+    )
+    api_token = (
+        st.session_state.get("ocr_api_token")
+        or os.getenv("OCR_API_TOKEN", "").strip()
+    )
+
+    if not api_url:
+        st.warning("请先在左侧的“接口配置”中填写OCR接口地址")
+        return None
+    if not api_token:
+        st.warning("请先在左侧的“接口配置”中填写OCR访问令牌")
+        return None
+
     cached_result = load_cached_parse_result(file_path, original_file_name)
     if cached_result:
         print(f"从缓存加载解析结果: {file_path}")
         return cached_result
 
     try:
-        API_URL = "https://uft8mbk5g3ndv3m1.aistudio-app.com/layout-parsing"
-        TOKEN = "6f83207f504098cd644f75618f9ed9507a5dfa7b"
-
         with open(file_path, "rb") as file:
             file_bytes = file.read()
             file_data = base64.b64encode(file_bytes).decode("ascii")
 
         headers = {
-            "Authorization": f"token {TOKEN}",
             "Content-Type": "application/json",
         }
+        if api_token:
+            headers["Authorization"] = f"token {api_token}"
         payload = {
             "file": file_data,
             "fileType": 0,
@@ -44,7 +58,7 @@ def call_online_parse_api(file_path: str) -> Optional[Dict[str, Any]]:
             "useChartRecognition": False,
         }
 
-        resp = requests.post(API_URL, json=payload, headers=headers, timeout=120)
+        resp = requests.post(api_url, json=payload, headers=headers, timeout=120)
         if resp.status_code != 200:
             st.error(f"在线解析失败，状态码: {resp.status_code}")
             return None

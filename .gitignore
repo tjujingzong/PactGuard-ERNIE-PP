@@ -5,3 +5,4 @@ __pycache__/
 .vscode/
 contract_analysis_results/
 docx/
+api.txt
