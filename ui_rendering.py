@@ -5,7 +5,7 @@ import json
 import base64
 from typing import Dict, List, Any
 import streamlit as st
-from ui_utils import preview_file_content, load_cached_parse_result
+from ui_utils import preview_file_content, load_cached_parse_result, compute_file_md5
 from ui_ocr_utils import (
     call_online_parse_api,
     find_text_positions_in_json,
@@ -151,17 +151,27 @@ def render_file_preview(file_path: str, height: int = 780):
 def render_preview_panel(file_path: str, preview_text: str):
     """两栏预览：左侧源文件，右侧识别结果对照，支持同步滚动"""
 
-    if st.session_state.ocr_parsed_file_path != file_path:
+    current_hash = st.session_state.get("file_hash")
+    if not current_hash:
+        current_hash = compute_file_md5(file_path)
+        st.session_state.file_hash = current_hash
+
+    if (
+        st.session_state.ocr_parsed_file_hash != current_hash
+        or st.session_state.ocr_parsed_file_path != file_path
+    ):
         original_file_name = st.session_state.get("file_name")
         cached_result = load_cached_parse_result(file_path, original_file_name)
         if cached_result:
             st.session_state.ocr_parse_result = cached_result
             st.session_state.ocr_parsed_file_path = file_path
             st.session_state.ocr_parsed_original_file_name = original_file_name
+            st.session_state.ocr_parsed_file_hash = current_hash
         else:
             st.session_state.ocr_parse_result = None
             st.session_state.ocr_parsed_file_path = None
             st.session_state.ocr_parsed_original_file_name = None
+            st.session_state.ocr_parsed_file_hash = None
 
     sync_scroll_js = """
     <script>

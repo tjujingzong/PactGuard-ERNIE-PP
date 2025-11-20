@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Any
 import logging
 from openai import OpenAI
 import requests
+from ui_utils import compute_file_md5
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -436,8 +437,11 @@ class ContractWorkflow:
         """步骤4: 整合所有结果"""
         logger.info("整合分析结果...")
 
+        file_content_hash = compute_file_md5(file_path)
+
         return {
             "file_path": file_path,
+            "file_content_hash": file_content_hash,
             "original_file_name": (
                 original_file_name
                 if original_file_name

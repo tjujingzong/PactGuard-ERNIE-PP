@@ -5,7 +5,37 @@ import json
 import tempfile
 import streamlit as st
 from typing import Dict, List, Optional, Any, Tuple
-import glob
+import hashlib
+
+
+def compute_file_md5(file_path: str, chunk_size: int = 1024 * 1024) -> Optional[str]:
+    """
+    计算文件内容的 MD5 值。
+
+    Args:
+        file_path: 文件路径
+        chunk_size: 读取块大小，默认 1MB
+
+    Returns:
+        32 位十六进制 MD5 字符串，若文件不存在或读取失败则返回 None
+    """
+    if not file_path:
+        return None
+
+    try:
+        if not os.path.exists(file_path):
+            return None
+
+        md5 = hashlib.md5()
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                md5.update(chunk)
+        return md5.hexdigest()
+    except Exception:
+        return None
 
 
 def initialize_session_state():
@@ -31,6 +61,9 @@ def initialize_session_state():
     if "ocr_parsed_original_file_name" not in st.session_state:
         # 记录上次OCR解析对应的原始文件名，便于比较
         st.session_state.ocr_parsed_original_file_name = None
+    if "ocr_parsed_file_hash" not in st.session_state:
+        # 记录上次OCR解析对应的文件内容哈希，优先用于判断是否同一文件
+        st.session_state.ocr_parsed_file_hash = None
     if "view_mode" not in st.session_state:
         # preview: 预览界面；analysis: 分析结果界面
         st.session_state.view_mode = "preview"
@@ -44,16 +77,28 @@ def initialize_session_state():
         st.session_state.ocr_api_token = os.getenv("OCR_API_TOKEN", "")
     if "skip_uploaded_file_once" not in st.session_state:
         st.session_state.skip_uploaded_file_once = False
+    if "file_hash" not in st.session_state:
+        st.session_state.file_hash = None
 
 
-def load_latest_result_by_filename(file_name: str) -> Optional[Dict[str, Any]]:
-    """根据文件名加载该文件的最新分析结果。
+def load_latest_result_by_filename(
+    file_name: str,
+    file_path: Optional[str] = None,
+    file_hash: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """根据文件内容哈希加载该文件的最新分析结果。
 
-    优先匹配 result["original_file_name"] == file_name；
-    兼容旧结果：若无 original_file_name，则用 basename(result["file_path"]) 比对。
+    参数中的 file_name 保留向后兼容，但匹配完全依赖 file_hash。
     """
     results_dir = "contract_analysis_results"
     if not os.path.exists(results_dir):
+        return None
+
+    content_hash = file_hash
+    if not content_hash and file_path:
+        content_hash = compute_file_md5(file_path)
+
+    if not content_hash:
         return None
 
     candidates: List[Dict[str, Any]] = []
@@ -66,14 +111,10 @@ def load_latest_result_by_filename(file_name: str) -> Optional[Dict[str, Any]]:
                 data = json.load(f)
             # 匹配逻辑
             match = False
-            ori = data.get("original_file_name")
-            if ori and ori == file_name:
+            saved_content_hash = data.get("file_content_hash")
+            if isinstance(saved_content_hash, str) and saved_content_hash == content_hash:
                 match = True
-            else:
-                # 兼容旧数据
-                fp = data.get("file_path")
-                if isinstance(fp, str) and os.path.basename(fp) == file_name:
-                    match = True
+
             if match:
                 # 以 processing_time 为主，退化到文件名时间戳排序
                 ts = data.get("processing_time")
@@ -198,12 +239,15 @@ def preview_file_content(file_path: str) -> str:
 
 
 def get_cache_file_paths(
-    file_path: str, original_file_name: Optional[str] = None
+    file_path: str,
+    original_file_name: Optional[str] = None,
+    file_hash: Optional[str] = None,
 ) -> Tuple[str, str]:
     """根据文件路径生成缓存文件路径（json和md）
 
     优先使用原始文件名（original_file_name），如果没有则使用文件路径中的文件名。
     使用PDF文件名（去掉扩展名）作为基础名称，便于与PDF对应。
+    附加文件内容的短哈希，避免不同版本互相覆盖。
     如果文件名包含特殊字符，会进行清理以确保文件系统兼容性。
     """
     import re
@@ -220,6 +264,14 @@ def get_cache_file_paths(
     if not safe_name:
         safe_name = "unnamed_file"
 
+    content_hash = file_hash or compute_file_md5(file_path)
+    if content_hash:
+        safe_name = f"{safe_name}_{content_hash[:12]}"
+    else:
+        abs_path = os.path.abspath(file_path)
+        path_hash = hashlib.md5(abs_path.encode("utf-8")).hexdigest()[:8]
+        safe_name = f"{safe_name}_{path_hash}"
+
     json_path = os.path.join("jsons", f"{safe_name}.json")
     md_path = os.path.join("mds", f"{safe_name}.md")
 
@@ -230,7 +282,10 @@ def load_cached_parse_result(
     file_path: str, original_file_name: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """从缓存加载解析结果"""
-    json_path, md_path = get_cache_file_paths(file_path, original_file_name)
+    file_hash = compute_file_md5(file_path)
+    json_path, md_path = get_cache_file_paths(
+        file_path, original_file_name, file_hash=file_hash
+    )
 
     if os.path.exists(json_path) and os.path.exists(md_path):
         try:
@@ -246,87 +301,7 @@ def load_cached_parse_result(
                 "_cached": True,
             }
         except Exception as e:
-            print(f"加载新格式缓存失败: {e}")
-
-    try:
-        current_content = preview_file_content(file_path)
-        if len(current_content) > 1000:
-            current_content = current_content[:1000]
-
-        jsons_dir = "jsons"
-        mds_dir = "mds"
-        if os.path.exists(jsons_dir) and os.path.exists(mds_dir):
-            json_files = glob.glob(os.path.join(jsons_dir, "tmp*.json"))
-
-            for old_json_file in json_files:
-                try:
-                    with open(old_json_file, "r", encoding="utf-8") as f:
-                        old_json_result = json.load(f)
-
-                    old_pages = old_json_result.get("pages", [])
-                    if old_pages:
-                        old_first_page_text = old_pages[0].get("text", "")
-                        if len(old_first_page_text) > 1000:
-                            old_first_page_text = old_first_page_text[:1000]
-
-                        common_chars = set(current_content) & set(old_first_page_text)
-                        if len(common_chars) > 50:
-                            old_md_file = os.path.join(
-                                mds_dir,
-                                os.path.basename(old_json_file).replace(".json", ".md"),
-                            )
-                            if os.path.exists(old_md_file):
-                                with open(old_md_file, "r", encoding="utf-8") as f:
-                                    old_markdown_text = f.read()
-
-                                print(
-                                    f"通过内容匹配找到旧格式缓存: {os.path.basename(old_json_file)}"
-                                )
-
-                                if original_file_name:
-                                    try:
-                                        new_json_path, new_md_path = (
-                                            get_cache_file_paths(
-                                                file_path, original_file_name
-                                            )
-                                        )
-                                        import shutil
-
-                                        shutil.copy2(old_json_file, new_json_path)
-                                        shutil.copy2(old_md_file, new_md_path)
-                                        print(
-                                            f"已迁移缓存文件到新格式: {os.path.basename(new_json_path)}"
-                                        )
-
-                                        with open(
-                                            new_json_path, "r", encoding="utf-8"
-                                        ) as f:
-                                            json_result = json.load(f)
-                                        with open(
-                                            new_md_path, "r", encoding="utf-8"
-                                        ) as f:
-                                            markdown_text = f.read()
-
-                                        return {
-                                            "json_result": json_result,
-                                            "markdown_text": markdown_text,
-                                            "raw_text": preview_file_content(file_path),
-                                            "_cached": True,
-                                        }
-                                    except Exception as e:
-                                        print(f"迁移缓存文件失败: {e}")
-
-                                return {
-                                    "json_result": old_json_result,
-                                    "markdown_text": old_markdown_text,
-                                    "raw_text": preview_file_content(file_path),
-                                    "_cached": True,
-                                }
-                except Exception as e:
-                    print(f"检查旧缓存文件 {old_json_file} 时出错: {e}")
-                    continue
-    except Exception as e:
-        print(f"查找旧格式缓存时出错: {e}")
+            print(f"加载缓存失败: {e}")
 
     return None
 
@@ -338,7 +313,10 @@ def save_parse_result(
     original_file_name: Optional[str] = None,
 ):
     """保存解析结果到缓存文件"""
-    json_path, md_path = get_cache_file_paths(file_path, original_file_name)
+    file_hash = compute_file_md5(file_path)
+    json_path, md_path = get_cache_file_paths(
+        file_path, original_file_name, file_hash=file_hash
+    )
 
     os.makedirs("jsons", exist_ok=True)
     os.makedirs("mds", exist_ok=True)

@@ -15,6 +15,7 @@ from ui_utils import (
     copy_sample_file,
     preview_file_content,
     load_cached_parse_result,
+    compute_file_md5,
 )
 from ui_workflow_processor import process_contract_workflow
 from ui_rendering import (
@@ -304,8 +305,17 @@ st.markdown(
 )
 
 
-def _is_same_source(parsed_path, parsed_name, current_file_path, current_file_name):
+def _is_same_source(
+    parsed_path,
+    parsed_name,
+    parsed_hash,
+    current_file_path,
+    current_file_name,
+    current_file_hash,
+):
     """判断OCR缓存是否与当前文件来源一致"""
+    if parsed_hash and current_file_hash and parsed_hash == current_file_hash:
+        return True
     if parsed_path and current_file_path:
         try:
             if os.path.abspath(parsed_path) == os.path.abspath(current_file_path):
@@ -328,6 +338,8 @@ def _ensure_current_file_ocr_result(
     ocr_result = st.session_state.get("ocr_parse_result")
     parsed_path = st.session_state.get("ocr_parsed_file_path")
     parsed_name = st.session_state.get("ocr_parsed_original_file_name")
+    parsed_hash = st.session_state.get("ocr_parsed_file_hash")
+    current_hash = st.session_state.get("file_hash")
 
     if (
         ocr_result
@@ -335,8 +347,10 @@ def _ensure_current_file_ocr_result(
         and _is_same_source(
             parsed_path,
             parsed_name,
+            parsed_hash,
             current_file_path,
             current_file_name,
+            current_hash,
         )
     ):
         return ocr_result
@@ -346,6 +360,9 @@ def _ensure_current_file_ocr_result(
         st.session_state.ocr_parse_result = cached_result
         st.session_state.ocr_parsed_file_path = current_file_path
         st.session_state.ocr_parsed_original_file_name = current_file_name
+        st.session_state.ocr_parsed_file_hash = current_hash or compute_file_md5(
+            current_file_path
+        )
         return cached_result
 
     return None
@@ -354,6 +371,10 @@ def _ensure_current_file_ocr_result(
 def main():
     """主函数"""
     initialize_session_state()
+
+    saved_path = st.session_state.get("saved_file_path")
+    if saved_path and not st.session_state.get("file_hash"):
+        st.session_state.file_hash = compute_file_md5(saved_path)
 
     title_col, button_col = st.columns([2, 1])
     with title_col:
@@ -416,9 +437,11 @@ def main():
                     st.session_state.ocr_parse_result = None
                     st.session_state.ocr_parsed_file_path = None
                     st.session_state.ocr_parsed_original_file_name = None
+                    st.session_state.ocr_parsed_file_hash = None
 
                     st.session_state.saved_file_path = saved_path
                     st.session_state.file_name = uploaded_file.name
+                    st.session_state.file_hash = compute_file_md5(saved_path)
                     st.session_state.preview_content = preview_file_content(saved_path)
 
         with tab2:
@@ -438,9 +461,11 @@ def main():
                             st.session_state.ocr_parse_result = None
                             st.session_state.ocr_parsed_file_path = None
                             st.session_state.ocr_parsed_original_file_name = None
+                            st.session_state.ocr_parsed_file_hash = None
 
                             st.session_state.saved_file_path = temp_path
                             st.session_state.file_name = file_name
+                            st.session_state.file_hash = compute_file_md5(temp_path)
                             st.session_state.preview_content = preview_file_content(
                                 temp_path
                             )
@@ -460,7 +485,11 @@ def main():
             and st.session_state.file_name
             and not st.session_state.loaded_from_history
         ):
-            cached = load_latest_result_by_filename(st.session_state.file_name)
+            cached = load_latest_result_by_filename(
+                st.session_state.file_name,
+                file_path=st.session_state.saved_file_path,
+                file_hash=st.session_state.file_hash,
+            )
             if cached:
                 st.session_state.workflow_result = cached
                 st.session_state.processing_status = "completed"
@@ -492,9 +521,11 @@ def main():
                                 if ocr_result:
                                     st.session_state.ocr_parsed_file_path = st.session_state.saved_file_path
                                     st.session_state.ocr_parsed_original_file_name = st.session_state.get("file_name")
+                                    st.session_state.ocr_parsed_file_hash = st.session_state.get("file_hash")
                                 else:
                                     st.session_state.ocr_parsed_file_path = None
                                     st.session_state.ocr_parsed_original_file_name = None
+                                    st.session_state.ocr_parsed_file_hash = None
                                 st.rerun()
                     
                     with btn2:
@@ -543,9 +574,11 @@ def main():
                                 if ocr_result:
                                     st.session_state.ocr_parsed_file_path = st.session_state.saved_file_path
                                     st.session_state.ocr_parsed_original_file_name = st.session_state.get("file_name")
+                                    st.session_state.ocr_parsed_file_hash = st.session_state.get("file_hash")
                                 else:
                                     st.session_state.ocr_parsed_file_path = None
                                     st.session_state.ocr_parsed_original_file_name = None
+                                    st.session_state.ocr_parsed_file_hash = None
                                 st.rerun()
                     
                     with btn2:
@@ -555,7 +588,11 @@ def main():
                         # 优先使用内存中的结果，如果没有，则根据是否存在历史JSON结果来判断
                         existing_result = st.session_state.get("workflow_result")
                         if not existing_result and current_file_name:
-                            cached = load_latest_result_by_filename(current_file_name)
+                            cached = load_latest_result_by_filename(
+                                current_file_name,
+                                file_path=current_file_path,
+                                file_hash=st.session_state.get("file_hash"),
+                            )
                             if cached:
                                 existing_result = cached
                                 st.session_state.workflow_result = cached
