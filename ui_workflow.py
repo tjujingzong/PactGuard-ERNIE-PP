@@ -304,6 +304,53 @@ st.markdown(
 )
 
 
+def _is_same_source(parsed_path, parsed_name, current_file_path, current_file_name):
+    """判断OCR缓存是否与当前文件来源一致"""
+    if parsed_path and current_file_path:
+        try:
+            if os.path.abspath(parsed_path) == os.path.abspath(current_file_path):
+                return True
+        except Exception:
+            if parsed_path == current_file_path:
+                return True
+    if parsed_name and current_file_name:
+        return parsed_name == current_file_name
+    return False
+
+
+def _ensure_current_file_ocr_result(
+    current_file_path: str | None, current_file_name: str | None
+):
+    """确保会话中保存了当前文件的OCR结果，如没有则尝试从缓存加载"""
+    if not current_file_path or not current_file_name:
+        return None
+
+    ocr_result = st.session_state.get("ocr_parse_result")
+    parsed_path = st.session_state.get("ocr_parsed_file_path")
+    parsed_name = st.session_state.get("ocr_parsed_original_file_name")
+
+    if (
+        ocr_result
+        and isinstance(ocr_result, dict)
+        and _is_same_source(
+            parsed_path,
+            parsed_name,
+            current_file_path,
+            current_file_name,
+        )
+    ):
+        return ocr_result
+
+    cached_result = load_cached_parse_result(current_file_path, current_file_name)
+    if cached_result:
+        st.session_state.ocr_parse_result = cached_result
+        st.session_state.ocr_parsed_file_path = current_file_path
+        st.session_state.ocr_parsed_original_file_name = current_file_name
+        return cached_result
+
+    return None
+
+
 def main():
     """主函数"""
     initialize_session_state()
@@ -353,15 +400,22 @@ def main():
                 "上传合同文件",
                 type=["pdf", "docx", "txt", "doc"],
                 help="支持PDF、DOCX、TXT、DOC格式",
+                key="uploaded_contract_file",
             )
 
-            if uploaded_file:
+            if st.session_state.get("skip_uploaded_file_once"):
+                st.session_state.skip_uploaded_file_once = False
+            elif uploaded_file:
                 saved_path = save_uploaded_file(uploaded_file)
                 if saved_path:
                     st.session_state.workflow_result = None
                     st.session_state.processing_status = "idle"
                     st.session_state.loaded_from_history = False
                     st.session_state.view_mode = "preview"
+                    # 切换新文件时清空旧的 OCR 状态，避免误用
+                    st.session_state.ocr_parse_result = None
+                    st.session_state.ocr_parsed_file_path = None
+                    st.session_state.ocr_parsed_original_file_name = None
 
                     st.session_state.saved_file_path = saved_path
                     st.session_state.file_name = uploaded_file.name
@@ -380,12 +434,17 @@ def main():
                             st.session_state.processing_status = "idle"
                             st.session_state.loaded_from_history = False
                             st.session_state.view_mode = "preview"
+                            # 切换样例文件时同样清空 OCR 状态
+                            st.session_state.ocr_parse_result = None
+                            st.session_state.ocr_parsed_file_path = None
+                            st.session_state.ocr_parsed_original_file_name = None
 
                             st.session_state.saved_file_path = temp_path
                             st.session_state.file_name = file_name
                             st.session_state.preview_content = preview_file_content(
                                 temp_path
                             )
+                            st.session_state.skip_uploaded_file_once = True
                             st.success(f"已选择: {file_name}")
                             st.rerun()
             else:
@@ -395,6 +454,7 @@ def main():
         hasattr(st.session_state, "saved_file_path")
         and st.session_state.saved_file_path
     ):
+        # 如果存在历史分析结果，自动加载但保持在预览模式，由用户手动决定是否查看结果
         if (
             st.session_state.processing_status == "idle"
             and st.session_state.file_name
@@ -405,9 +465,9 @@ def main():
                 st.session_state.workflow_result = cached
                 st.session_state.processing_status = "completed"
                 st.session_state.loaded_from_history = True
-                st.session_state.view_mode = "analysis"
-                st.success("已加载历史最新分析结果")
-                st.rerun()
+                # 不再强制切换到分析视图，也不立即 rerun，避免跳过预览页
+                # 保持 view_mode 为 "preview"，并在按钮区域提示用户可以直接查看历史结果
+                st.info("已自动加载历史最新分析结果，可在预览页点击「📊 查看结果」直接查看，或重新分析。")
         
         with button_placeholder.container():
             if st.session_state.processing_status == "processing":
@@ -421,15 +481,21 @@ def main():
                     
                     with btn1:
                         if st.button("▶ 调用OCR解析", type="primary", use_container_width=True):
-                            ocr_result = call_online_parse_api(st.session_state.saved_file_path)
-                            st.session_state.ocr_parse_result = ocr_result
-                            if ocr_result:
-                                st.session_state.ocr_parsed_file_path = st.session_state.saved_file_path
-                                st.session_state.ocr_parsed_original_file_name = st.session_state.get("file_name")
+                            # 校验 OCR 配置
+                            ocr_url = (st.session_state.get("ocr_api_url") or "").strip()
+                            ocr_token = (st.session_state.get("ocr_api_token") or "").strip()
+                            if not ocr_url or not ocr_token:
+                                st.warning("请先在左侧『接口配置』中填写 OCR 接口地址和访问令牌，再调用 OCR 解析。")
                             else:
-                                st.session_state.ocr_parsed_file_path = None
-                                st.session_state.ocr_parsed_original_file_name = None
-                            st.rerun()
+                                ocr_result = call_online_parse_api(st.session_state.saved_file_path)
+                                st.session_state.ocr_parse_result = ocr_result
+                                if ocr_result:
+                                    st.session_state.ocr_parsed_file_path = st.session_state.saved_file_path
+                                    st.session_state.ocr_parsed_original_file_name = st.session_state.get("file_name")
+                                else:
+                                    st.session_state.ocr_parsed_file_path = None
+                                    st.session_state.ocr_parsed_original_file_name = None
+                                st.rerun()
                     
                     with btn2:
                         if st.button("📊 查看结果", use_container_width=True):
@@ -466,24 +532,75 @@ def main():
                     
                     with btn1:
                         if st.button("▶ 调用OCR解析", type="primary", use_container_width=True):
-                            ocr_result = call_online_parse_api(st.session_state.saved_file_path)
-                            st.session_state.ocr_parse_result = ocr_result
-                            if ocr_result:
-                                st.session_state.ocr_parsed_file_path = st.session_state.saved_file_path
-                                st.session_state.ocr_parsed_original_file_name = st.session_state.get("file_name")
+                            # 校验 OCR 配置
+                            ocr_url = (st.session_state.get("ocr_api_url") or "").strip()
+                            ocr_token = (st.session_state.get("ocr_api_token") or "").strip()
+                            if not ocr_url or not ocr_token:
+                                st.warning("请先在左侧『接口配置』中填写 OCR 接口地址和访问令牌，再调用 OCR 解析。")
                             else:
-                                st.session_state.ocr_parsed_file_path = None
-                                st.session_state.ocr_parsed_original_file_name = None
-                            st.rerun()
+                                ocr_result = call_online_parse_api(st.session_state.saved_file_path)
+                                st.session_state.ocr_parse_result = ocr_result
+                                if ocr_result:
+                                    st.session_state.ocr_parsed_file_path = st.session_state.saved_file_path
+                                    st.session_state.ocr_parsed_original_file_name = st.session_state.get("file_name")
+                                else:
+                                    st.session_state.ocr_parsed_file_path = None
+                                    st.session_state.ocr_parsed_original_file_name = None
+                                st.rerun()
                     
                     with btn2:
-                        if st.button("🚀 开始分析", use_container_width=True):
-                            process_contract_workflow(st.session_state.saved_file_path)
-                            st.rerun()
+                        current_file_path = st.session_state.get("saved_file_path")
+                        current_file_name = st.session_state.get("file_name")
+
+                        # 优先使用内存中的结果，如果没有，则根据是否存在历史JSON结果来判断
+                        existing_result = st.session_state.get("workflow_result")
+                        if not existing_result and current_file_name:
+                            cached = load_latest_result_by_filename(current_file_name)
+                            if cached:
+                                existing_result = cached
+                                st.session_state.workflow_result = cached
+                                st.session_state.processing_status = "completed"
+                                st.session_state.loaded_from_history = True
+
+                        if existing_result:
+                            if st.button("📊 查看结果", use_container_width=True):
+                                st.session_state.view_mode = "analysis"
+                                st.rerun()
+                        else:
+                            # 只有当前文件已经完成 OCR 解析后，才允许开始分析（根据是否存在 OCR JSON 判断）
+                            ocr_result = _ensure_current_file_ocr_result(
+                                current_file_path, current_file_name
+                            )
+                            has_valid_ocr = ocr_result is not None
+
+                            if st.button(
+                                "🚀 开始分析",
+                                use_container_width=True,
+                                disabled=not has_valid_ocr,
+                                help=(
+                                    "请先点击左侧「调用OCR解析」，完成当前文件的版面解析后再开始分析。"
+                                    if not has_valid_ocr
+                                    else None
+                                ),
+                            ):
+                                # 校验 LLM 接口配置
+                                llm_url = (st.session_state.get("llm_api_base_url") or "").strip()
+                                llm_key = (st.session_state.get("llm_api_key") or "").strip()
+                                if not llm_url or not llm_key:
+                                    st.warning("请先在左侧『接口配置』中填写大模型接口地址和 API Key，再开始分析。")
+                                else:
+                                    process_contract_workflow(st.session_state.saved_file_path)
+                                    st.rerun()
                 else:
                     if st.button("🚀 开始分析", type="primary", use_container_width=True):
-                        process_contract_workflow(st.session_state.saved_file_path)
-                        st.rerun()
+                        # 校验 LLM 接口配置
+                        llm_url = (st.session_state.get("llm_api_base_url") or "").strip()
+                        llm_key = (st.session_state.get("llm_api_key") or "").strip()
+                        if not llm_url or not llm_key:
+                            st.warning("请先在左侧『接口配置』中填写大模型接口地址和 API Key，再开始分析。")
+                        else:
+                            process_contract_workflow(st.session_state.saved_file_path)
+                            st.rerun()
 
         if st.session_state.processing_status == "processing":
             st.info("正在处理中，请稍候...")
@@ -514,42 +631,11 @@ def main():
                         "original_file_name", st.session_state.get("file_name")
                     )
 
-                    def _is_same_source(parsed_path, parsed_name):
-                        """判断当前OCR缓存是否与结果对应"""
-                        if parsed_path and current_file_path:
-                            try:
-                                if os.path.abspath(parsed_path) == os.path.abspath(
-                                    current_file_path
-                                ):
-                                    return True
-                            except Exception:
-                                if parsed_path == current_file_path:
-                                    return True
-                        if parsed_name and current_file_name:
-                            return parsed_name == current_file_name
-                        return False
-
-                    ocr_result = st.session_state.get("ocr_parse_result")
-                    parsed_path = st.session_state.get("ocr_parsed_file_path")
-                    parsed_name = st.session_state.get("ocr_parsed_original_file_name")
-                    if (
-                        ocr_result
-                        and isinstance(ocr_result, dict)
-                        and _is_same_source(parsed_path, parsed_name)
-                    ):
+                    ocr_result = _ensure_current_file_ocr_result(
+                        current_file_path, current_file_name
+                    )
+                    if ocr_result:
                         json_result = ocr_result.get("json_result")
-
-                    if not json_result and current_file_path:
-                        cached_result = load_cached_parse_result(
-                            current_file_path, current_file_name
-                        )
-                        if cached_result:
-                            json_result = cached_result.get("json_result")
-                            st.session_state.ocr_parse_result = cached_result
-                            st.session_state.ocr_parsed_file_path = current_file_path
-                            st.session_state.ocr_parsed_original_file_name = (
-                                current_file_name
-                            )
                     if json_result:
                         html_content = generate_html_layout(json_result, all_issues)
                         st.components.v1.html(html_content, height=840, scrolling=True)

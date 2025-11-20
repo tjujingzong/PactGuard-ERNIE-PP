@@ -8,7 +8,6 @@ import fitz
 import os
 import re
 from tempfile import NamedTemporaryFile
-from paddleocr import PaddleOCR
 import logging
 from typing import List, Dict
 import platform
@@ -25,6 +24,7 @@ contract_mcp = FastMCP(
 )
 
 try:
+    from paddleocr import PaddleOCR
     ocr = PaddleOCR(
         use_angle_cls=True,  # 使用方向分类器
         lang="ch",  # 中文模型

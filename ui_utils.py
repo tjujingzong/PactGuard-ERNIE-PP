@@ -42,6 +42,8 @@ def initialize_session_state():
         st.session_state.ocr_api_url = os.getenv("OCR_API_URL", "")
     if "ocr_api_token" not in st.session_state:
         st.session_state.ocr_api_token = os.getenv("OCR_API_TOKEN", "")
+    if "skip_uploaded_file_once" not in st.session_state:
+        st.session_state.skip_uploaded_file_once = False
 
 
 def load_latest_result_by_filename(file_name: str) -> Optional[Dict[str, Any]]:
