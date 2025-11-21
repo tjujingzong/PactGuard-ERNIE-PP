@@ -21,10 +21,16 @@ class ContractWorkflow:
         mcp_url: str = "http://localhost:7001",
         llm_api_key: Optional[str] = None,
         llm_api_base_url: Optional[str] = None,
+        llm_model_name: Optional[str] = None,
     ):
         self.mcp_url = mcp_url
         api_key = (llm_api_key or os.environ.get("LLM_API_KEY", "")).strip()
         base_url = (llm_api_base_url or os.environ.get("LLM_API_BASE_URL", "")).strip()
+        default_model = "ernie-4.5-turbo-128k"
+        self.llm_model_name = (
+            (llm_model_name or os.environ.get("LLM_MODEL_NAME", "")).strip()
+            or default_model
+        )
 
         if not api_key or not base_url:
             raise ValueError("未配置大模型接口，请在界面或环境变量中设置后重试")
@@ -235,7 +241,7 @@ class ContractWorkflow:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"请分析以下合同文本：\n\n{text}"},
                 ],
-                model="ernie-4.5-turbo-128k",
+                model=self.llm_model_name,
                 temperature=0.7,
                 response_format={"type": "json_object"},
             )
@@ -380,7 +386,7 @@ class ContractWorkflow:
                         "content": json.dumps(user_content, ensure_ascii=False),
                     },
                 ],
-                model="ernie-4.5-turbo-128k",
+                model=self.llm_model_name,
                 temperature=0.7,
                 response_format={"type": "json_object"},
             )

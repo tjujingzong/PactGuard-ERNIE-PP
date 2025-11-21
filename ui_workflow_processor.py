@@ -14,6 +14,7 @@ def process_contract_workflow(file_path: str):
         workflow = ContractWorkflow(
             llm_api_base_url=st.session_state.get("llm_api_base_url"),
             llm_api_key=st.session_state.get("llm_api_key"),
+            llm_model_name=st.session_state.get("llm_model_name"),
         )
 
         # 步骤1: 文档解析/分析

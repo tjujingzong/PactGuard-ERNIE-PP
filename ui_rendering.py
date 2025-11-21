@@ -372,33 +372,46 @@ def render_preview_panel(file_path: str, preview_text: str):
                     )
 
             with tabs[2]:
-                if st.session_state.ocr_parse_result and isinstance(
-                    st.session_state.ocr_parse_result, dict
+                current_file_hash = (
+                    st.session_state.get("file_hash")
+                    or st.session_state.get("ocr_parsed_file_hash")
+                    or "unknown"
+                )
+                widget_key = f"json_preview_area_{current_file_hash}"
+
+                def reset_json_preview():
+                    st.session_state.pop(widget_key, None)
+
+                json_value = ""
+                has_json = False
+
+                if (
+                    st.session_state.ocr_parse_result
+                    and isinstance(st.session_state.ocr_parse_result, dict)
                 ):
                     json_result = st.session_state.ocr_parse_result.get(
                         "json_result", {}
                     )
                     if json_result:
-                        json_str = json.dumps(json_result, ensure_ascii=False, indent=2)
-                        st.text_area(
-                            "JSON内容",
-                            json_str,
-                            height=780,
-                            disabled=False,
-                            label_visibility="collapsed",
-                            key="json_preview_area",
-                        )
+                        json_value = json.dumps(json_result, ensure_ascii=False, indent=2)
+                        has_json = True
+                        if st.session_state.get(widget_key) != json_value:
+                            st.session_state[widget_key] = json_value
                     else:
-                        st.info("暂无JSON结果。")
+                        st.info("暂无JSON结果，当前标签保持空白。")
+                        reset_json_preview()
                 else:
-                    st.text_area(
-                        "JSON内容",
-                        "",
-                        height=780,
-                        disabled=False,
-                        label_visibility="collapsed",
-                        key="json_preview_area",
-                    )
+                    st.info("尚未完成OCR解析，JSON标签保持空白。")
+                    reset_json_preview()
+
+                st.text_area(
+                    "JSON内容",
+                    value=st.session_state.get(widget_key, "" if not has_json else json_value),
+                    height=780,
+                    disabled=False,
+                    label_visibility="collapsed",
+                    key=widget_key,
+                )
 
 
 def format_json_result_as_text(json_result: Dict[str, Any]) -> str:

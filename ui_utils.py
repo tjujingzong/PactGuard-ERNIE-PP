@@ -1,11 +1,13 @@
 # ui_utils.py
 
 import os
+import re
 import json
 import tempfile
 import streamlit as st
 from typing import Dict, List, Optional, Any, Tuple
 import hashlib
+from datetime import datetime
 
 
 def compute_file_md5(file_path: str, chunk_size: int = 1024 * 1024) -> Optional[str]:
@@ -71,6 +73,10 @@ def initialize_session_state():
         st.session_state.llm_api_base_url = os.getenv("LLM_API_BASE_URL", "")
     if "llm_api_key" not in st.session_state:
         st.session_state.llm_api_key = os.getenv("LLM_API_KEY", "")
+    if "llm_model_name" not in st.session_state:
+        st.session_state.llm_model_name = os.getenv(
+            "LLM_MODEL_NAME", "ernie-4.5-turbo-128k"
+        )
     if "ocr_api_url" not in st.session_state:
         st.session_state.ocr_api_url = os.getenv("OCR_API_URL", "")
     if "ocr_api_token" not in st.session_state:
@@ -79,6 +85,10 @@ def initialize_session_state():
         st.session_state.skip_uploaded_file_once = False
     if "file_hash" not in st.session_state:
         st.session_state.file_hash = None
+    if "last_processed_upload_name" not in st.session_state:
+        st.session_state.last_processed_upload_name = None
+    if "last_processed_upload_size" not in st.session_state:
+        st.session_state.last_processed_upload_size = None
 
 
 def load_latest_result_by_filename(
@@ -156,14 +166,69 @@ def load_latest_result_by_filename(
     return candidates[0]["data"]
 
 
+SUPPORTED_FILE_EXTENSIONS = (".pdf", ".docx", ".txt", ".doc")
+UPLOADED_DIR = "uploaded_contracts"
+
+
+def _sanitize_filename(name: str) -> str:
+    """清理文件名，仅保留字母数字、下划线、连字符以及中文字符。"""
+    cleaned = re.sub(r"[^\w\u4e00-\u9fff-]", "_", name)
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned or "uploaded_file"
+
+
+def _ensure_unique_file_path(base_name: str, suffix: str) -> str:
+    """避免重名，必要时追加序号。"""
+    os.makedirs(UPLOADED_DIR, exist_ok=True)
+    candidate = f"{base_name}{suffix}"
+    counter = 1
+    while os.path.exists(os.path.join(UPLOADED_DIR, candidate)):
+        candidate = f"{base_name}_{counter}{suffix}"
+        counter += 1
+    return os.path.join(UPLOADED_DIR, candidate)
+
+
 def save_uploaded_file(uploaded_file) -> Optional[str]:
-    """保存上传的文件"""
+    """保存上传的文件到本地目录，便于后续复用"""
     if not uploaded_file:
         return None
-    suffix = os.path.splitext(uploaded_file.name)[1]
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(uploaded_file.read())
-        return tmp.name
+
+    original_name = uploaded_file.name or "uploaded_file"
+    base_name, suffix = os.path.splitext(original_name)
+    suffix = suffix or ".pdf"
+    suffix = suffix.lower()
+
+    safe_base = _sanitize_filename(base_name)
+    file_path = _ensure_unique_file_path(safe_base, suffix)
+
+    try:
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.read())
+        # 更新文件修改时间为当前，便于排序
+        now = datetime.now().timestamp()
+        os.utime(file_path, (now, now))
+        return file_path
+    except Exception as exc:
+        st.error(f"保存上传文件失败: {exc}")
+        return None
+
+
+def get_uploaded_files(limit: Optional[int] = None) -> List[str]:
+    """按时间倒序返回用户上传的文件列表"""
+    if not os.path.exists(UPLOADED_DIR):
+        return []
+
+    files = []
+    for file in os.listdir(UPLOADED_DIR):
+        file_path = os.path.join(UPLOADED_DIR, file)
+        if os.path.isfile(file_path) and file.lower().endswith(SUPPORTED_FILE_EXTENSIONS):
+            files.append(file_path)
+
+    files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+
+    if limit is not None:
+        return files[:limit]
+    return files
 
 
 def get_sample_files() -> List[str]:
@@ -176,7 +241,7 @@ def get_sample_files() -> List[str]:
     for file in os.listdir(contracts_dir):
         file_path = os.path.join(contracts_dir, file)
         if os.path.isfile(file_path) and file.lower().endswith(
-            (".pdf", ".docx", ".txt", ".doc")
+            SUPPORTED_FILE_EXTENSIONS
         ):
             sample_files.append(file_path)
 

@@ -6,3 +6,6 @@ __pycache__/
 contract_analysis_results/
 docx/
 api.txt
+uploaded_contracts/
+jsons/
+mds/

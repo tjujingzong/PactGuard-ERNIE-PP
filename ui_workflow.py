@@ -12,6 +12,7 @@ from ui_utils import (
     load_latest_result_by_filename,
     save_uploaded_file,
     get_sample_files,
+    get_uploaded_files,
     copy_sample_file,
     preview_file_content,
     load_cached_parse_result,
@@ -384,10 +385,10 @@ def main():
     with st.sidebar:
         st.markdown("### 🔧 接口配置")
         st.text_input(
-            "大模型接口地址 (https://cloud.baidu.com/product-s/qianfan_home)",
+            "大模型接口地址",
             key="llm_api_base_url",
             placeholder="https://qianfan.baidubce.com/****",
-            help="填写兼容OpenAI协议的大模型HTTP地址",
+            help="填写兼容OpenAI协议的大模型HTTP地址(https://cloud.baidu.com/product-s/qianfan_home)",
         )
         st.text_input(
             "大模型 API Key",
@@ -397,17 +398,23 @@ def main():
             help="只保存在当前会话内，请勿泄露",
         )
         st.text_input(
-            "OCR 接口地址 (https://aistudio.baidu.com/paddleocr/task)",
-            key="ocr_api_url",
-            placeholder="https://*****.aistudio-app.com/layout-parsing",
-            help="支持自定义布局解析服务HTTP地址",
+            "大模型 Model 名称",
+            key="llm_model_name",
+            placeholder="ernie-4.5-turbo-128k",
+            help="用于调用大模型的具体模型名，如 ernie-4.5-turbo-128k",
         )
         st.text_input(
-            "OCR 访问令牌 (https://aistudio.baidu.com/account/accessToken)",
+            "OCR 接口地址",
+            key="ocr_api_url",
+            placeholder="https://*****.aistudio-app.com/layout-parsing",
+            help="支持自定义布局解析服务HTTP地址,如 (https://aistudio.baidu.com/paddleocr/task)",
+        )
+        st.text_input(
+            "OCR 访问令牌",
             key="ocr_api_token",
             placeholder="token",
             type="password",
-            help="如果接口需要鉴权，请填写对应token",
+            help="如果接口需要鉴权，请填写对应token (https://aistudio.baidu.com/account/accessToken)",
         )
         st.divider()
 
@@ -427,22 +434,79 @@ def main():
             if st.session_state.get("skip_uploaded_file_once"):
                 st.session_state.skip_uploaded_file_once = False
             elif uploaded_file:
-                saved_path = save_uploaded_file(uploaded_file)
-                if saved_path:
-                    st.session_state.workflow_result = None
-                    st.session_state.processing_status = "idle"
-                    st.session_state.loaded_from_history = False
-                    st.session_state.view_mode = "preview"
-                    # 切换新文件时清空旧的 OCR 状态，避免误用
-                    st.session_state.ocr_parse_result = None
-                    st.session_state.ocr_parsed_file_path = None
-                    st.session_state.ocr_parsed_original_file_name = None
-                    st.session_state.ocr_parsed_file_hash = None
+                # 检查是否已经处理过这个文件（通过文件名和大小判断）
+                file_name = uploaded_file.name
+                file_size = uploaded_file.size
+                last_name = st.session_state.get("last_processed_upload_name")
+                last_size = st.session_state.get("last_processed_upload_size")
+                
+                # 只有当文件名或大小不同时，才认为是新文件
+                if file_name != last_name or file_size != last_size:
+                    saved_path = save_uploaded_file(uploaded_file)
+                    if saved_path:
+                        # 记录已处理的上传文件信息
+                        st.session_state.last_processed_upload_name = file_name
+                        st.session_state.last_processed_upload_size = file_size
+                        
+                        st.session_state.workflow_result = None
+                        st.session_state.processing_status = "idle"
+                        st.session_state.loaded_from_history = False
+                        st.session_state.view_mode = "preview"
+                        # 切换新文件时清空旧的 OCR 状态，避免误用
+                        st.session_state.ocr_parse_result = None
+                        st.session_state.ocr_parsed_file_path = None
+                        st.session_state.ocr_parsed_original_file_name = None
+                        st.session_state.ocr_parsed_file_hash = None
 
-                    st.session_state.saved_file_path = saved_path
-                    st.session_state.file_name = uploaded_file.name
-                    st.session_state.file_hash = compute_file_md5(saved_path)
-                    st.session_state.preview_content = preview_file_content(saved_path)
+                        st.session_state.saved_file_path = saved_path
+                        st.session_state.file_name = file_name
+                        st.session_state.file_hash = compute_file_md5(saved_path)
+                        st.session_state.preview_content = preview_file_content(saved_path)
+                        st.success(f"已上传并选中: {file_name}")
+                        st.rerun()
+
+            uploaded_history_files = get_uploaded_files()
+            if uploaded_history_files:
+                st.divider()
+                st.write("已上传文件（可点击快速切换）：")
+                current_file_path = st.session_state.get("saved_file_path")
+                for i, history_path in enumerate(uploaded_history_files):
+                    file_name = os.path.basename(history_path)
+                    is_current = current_file_path and os.path.abspath(history_path) == os.path.abspath(current_file_path)
+                    
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        button_label = f"📄 {file_name}"
+                        if is_current:
+                            button_label = f"✅ {file_name} (当前)"
+                        if st.button(button_label, key=f"uploaded_{i}", use_container_width=True):
+                            st.session_state.workflow_result = None
+                            st.session_state.processing_status = "idle"
+                            st.session_state.loaded_from_history = False
+                            st.session_state.view_mode = "preview"
+                            st.session_state.ocr_parse_result = None
+                            st.session_state.ocr_parsed_file_path = None
+                            st.session_state.ocr_parsed_original_file_name = None
+                            st.session_state.ocr_parsed_file_hash = None
+
+                            st.session_state.saved_file_path = history_path
+                            st.session_state.file_name = file_name
+                            st.session_state.file_hash = compute_file_md5(history_path)
+                            st.session_state.preview_content = preview_file_content(
+                                history_path
+                            )
+                            st.session_state.skip_uploaded_file_once = True
+                            st.success(f"已切换: {file_name}")
+                            st.rerun()
+                    with col2:
+                        if st.button("🗑️", key=f"delete_uploaded_{i}", help="删除此文件", use_container_width=True):
+                            try:
+                                if os.path.exists(history_path):
+                                    os.remove(history_path)
+                                    st.success(f"已删除: {file_name}")
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"删除文件失败: {str(e)}")
 
         with tab2:
             sample_files = get_sample_files()
