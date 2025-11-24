@@ -26,7 +26,7 @@ class ContractWorkflow:
         self.mcp_url = mcp_url
         api_key = (llm_api_key or os.environ.get("LLM_API_KEY", "")).strip()
         base_url = (llm_api_base_url or os.environ.get("LLM_API_BASE_URL", "")).strip()
-        default_model = "ernie-4.5-turbo-128k"
+        default_model = "ernie-5.0-thinking-preview"
         self.llm_model_name = (
             (llm_model_name or os.environ.get("LLM_MODEL_NAME", "")).strip()
             or default_model
@@ -189,13 +189,6 @@ class ContractWorkflow:
             "法律依据": "相关法律条文",
             "修改建议": "具体修改建议"
         }
-        
-        特别注意：
-        1. 识别任何违法或违规条款
-        2. 评估条款的公平性和合理性
-        3. 关注权利义务的平衡
-        4. 提供客观的法律建议
-        5. "条款"字段必须包含完整的条款原文，以便后续进行文本匹配定位
         """
 
         return self._call_llm_for_analysis(system_prompt, text, "法律风险")
@@ -219,14 +212,6 @@ class ContractWorkflow:
             "修改建议": "具体修改建议",
             "商业优化": "商业优化建议"
         }
-        
-        特别注意：
-        1. 关注付款条件、违约责任等关键商业条款
-        2. 评估商业条款的公平性和合理性
-        3. 识别潜在的商业机会和风险
-        4. 关注成本收益分配的合理性
-        5. 评估长期商业影响和潜在风险
-        6. "条款"字段必须包含完整的条款原文，以便后续进行文本匹配定位
         """
 
         return self._call_llm_for_analysis(system_prompt, text, "商业风险")
