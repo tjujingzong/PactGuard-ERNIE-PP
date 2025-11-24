@@ -3,11 +3,19 @@
 import os
 import json
 import time
+import importlib
 from typing import Dict, List, Optional, Any
 import logging
 from openai import OpenAI
 import requests
 from ui_utils import compute_file_md5
+
+json_repair_spec = importlib.util.find_spec("json_repair")
+if json_repair_spec:
+    json_repair_module = importlib.import_module("json_repair")
+    repair_json = getattr(json_repair_module, "repair_json", None)
+else:  # pragma: no cover - 兼容未安装依赖的情况
+    repair_json = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,7 +34,7 @@ class ContractWorkflow:
         self.mcp_url = mcp_url
         api_key = (llm_api_key or os.environ.get("LLM_API_KEY", "")).strip()
         base_url = (llm_api_base_url or os.environ.get("LLM_API_BASE_URL", "")).strip()
-        default_model = "ernie-5.0-thinking-preview"
+        default_model = "ernie-4.5-turbo-128k"
         self.llm_model_name = (
             (llm_model_name or os.environ.get("LLM_MODEL_NAME", "")).strip()
             or default_model
@@ -232,11 +240,16 @@ class ContractWorkflow:
             )
 
             content = chat_completion.choices[0].message.content.strip()
+            logger.info(f"{analysis_type}分析模型原始输出: {content}")
             logger.info(f"{analysis_type}分析完成")
 
             # 解析JSON结果
+            parsed = self._parse_model_json(content, f"{analysis_type}分析")
+            if parsed is None:
+                return []
+
             try:
-                result = json.loads(content)
+                result = parsed
                 if isinstance(result, list):
                     return result
                 elif isinstance(result, dict):
@@ -246,8 +259,8 @@ class ContractWorkflow:
                     return [result]
                 else:
                     return []
-            except json.JSONDecodeError:
-                logger.error(f"解析{analysis_type}分析结果失败")
+            except Exception:
+                logger.error(f"解析{analysis_type}分析结果失败，原始内容: {content}")
                 return []
 
         except Exception as e:
@@ -377,14 +390,15 @@ class ContractWorkflow:
             )
 
             content = chat_completion.choices[0].message.content.strip()
+            logger.info(f"综合建议模型原始输出: {content}")
 
-            try:
-                suggestions = json.loads(content)
+            parsed = self._parse_model_json(content, "综合建议")
+            if isinstance(parsed, dict):
                 logger.info("综合建议生成完成")
-                return suggestions
-            except json.JSONDecodeError:
-                logger.error("解析建议结果失败")
-                return self._generate_default_suggestions(statistics)
+                return parsed
+
+            logger.error(f"解析建议结果失败，原始内容: {content}")
+            return self._generate_default_suggestions(statistics)
 
         except Exception as e:
             logger.error(f"生成建议失败: {str(e)}")
@@ -487,6 +501,74 @@ class ContractWorkflow:
         except Exception as e:
             logger.error(f"生成高亮文档失败: {str(e)}")
             return None
+
+    def _parse_model_json(self, content: str, context: str) -> Optional[Any]:
+        """尝试解析模型返回的JSON，失败时使用json_repair"""
+        if not content:
+            return None
+
+        cleaned = content.strip()
+
+        # 若模型在任意位置使用```包裹JSON，先提取代码块
+        code_block = self._extract_code_block(cleaned)
+        if code_block:
+            cleaned = code_block
+        else:
+            cleaned = self._strip_code_fences(cleaned)
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        if repair_json is None:
+            logger.error("未检测到 json_repair 库，无法自动修复无效JSON")
+            logger.error(f"原始内容: {content}")
+            return None
+
+        try:
+            repaired = repair_json(cleaned, ensure_ascii=False)
+            return json.loads(repaired)
+        except Exception as e:
+            logger.error(f"使用json_repair解析{context}结果失败: {str(e)}")
+            logger.error(f"原始内容: {content}")
+            return None
+
+    @staticmethod
+    def _strip_code_fences(text: str) -> str:
+        """移除模型输出中可能存在的markdown代码块包裹"""
+        cleaned = text.strip()
+
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+            newline_index = cleaned.find("\n")
+            if newline_index != -1:
+                cleaned = cleaned[newline_index + 1 :]
+
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+
+        return cleaned.strip()
+
+    @staticmethod
+    def _extract_code_block(text: str) -> Optional[str]:
+        """提取字符串中的首个markdown代码块"""
+        start = text.find("```")
+        if start == -1:
+            return None
+
+        end = text.find("```", start + 3)
+        if end == -1:
+            return None
+
+        first_line_break = text.find("\n", start + 3, end)
+        if first_line_break == -1:
+            # 代码块无语言标记
+            content_start = start + 3
+        else:
+            content_start = first_line_break + 1
+
+        return text[content_start:end].strip()
 
 
 def main():

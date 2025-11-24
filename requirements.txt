@@ -12,3 +12,4 @@ streamlit==1.50.0
 urllib3==2.5.0
 uvicorn==0.38.0
 paddlepaddle==3.2.1
+json_repair==0.54.1
