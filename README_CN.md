@@ -10,7 +10,7 @@ PactGuard-ERNIE-PP 是一款智能合同审查工具：上传 PDF/扫描件/图�
 - **全链路工作流**：`ui_workflow.py` + `contract_workflow.py` 将「解析→风险分析→建议生成→结果渲染」拆分为可观测的四大阶段。
 - **AI风险洞察**：围绕法律与商业两个维度输出风险等级、评分、命中的合同条款以及逐条修订建议，并在报告中标记原文位置。
 - **历史留存与复用**：分析结果与中间产物自动写入 `contract_analysis_results/`、`jsons/`、`mds/`，方便二次核查或回显。
-- **一键启动体验**：`start_workflow.py` 负责检测/拉起 `mcp_service.py`，并启动 Streamlit UI。
+- **一键启动体验**：运行 `python -m streamlit run ui_workflow.py` 即可自动检测/拉起 `mcp_service.py`，并启动 Streamlit UI。
 - **可自定义LLM/OCR**：通过环境变量随时切换 LLM API Base、API Key、OCR接口，实现云端/本地自由组合。
 
 ## 系统架构速览
@@ -36,7 +36,6 @@ pp-contract/
 ├── ui_utils.py                   # 缓存、样例、会话管理
 ├── ui_ocr_utils.py               # OCR/在线解析工具
 ├── mcp_service.py                # 文档解析/OCR后端
-├── start_workflow.py             # 一键启动脚本
 ├── contract_analysis_results/    # 历史结果
 ├── contracts/                    # Demo合同
 ├── pics/demo.png                 # README截图
@@ -70,16 +69,15 @@ pip install -r requirements.txt
 ## 启动方式
 
 ```bash
-python start_workflow.py
+python -m streamlit run ui_workflow.py
 ```
 
-脚本会：
+系统会自动：
 1. 检查 `mcp_service.py` 是否已在 `http://localhost:7001` 运行；
-2. 未运行则后台拉起 MCP 服务并等待健康检查；
-3. 自动执行 `streamlit run ui_workflow.py --server.port 8501`；
-4. 退出 UI 时自动关闭 MCP 子进程。
+2. 如果未运行，自动在后台启动 MCP 服务并等待健康检查；
+3. 启动 Streamlit UI（默认端口 8501，可在启动时通过 `--server.port` 指定其他端口）。
 
-浏览器访问 `http://localhost:8501` 即可。
+浏览器会自动打开或访问显示的地址（通常是 `http://localhost:8501`）。
 
 ## 使用指南
 
@@ -94,7 +92,7 @@ python start_workflow.py
 
 ## 开发与调试
 
-- **日志与健康检查**：`mcp_service.py` 提供 `/health` 接口；UI 端 `start_workflow.py` 会持续轮询，便于容错。
+- **日志与健康检查**：`mcp_service.py` 提供 `/health` 接口；UI 端会自动检测并启动 MCP 服务，便于容错。
 - **样例与缓存**：`ui_utils.initialize_session_state` 控制缓存键，调试时可删除 `contract_analysis_results/` 以确保全新运行。
 - **UI定制**：`ui_workflow.py` 中包含大量 CSS，支持自定义布局、暗色主题等；`ui_rendering.py` 则是高亮与风险卡片的统一出口。
 - **扩展LLM**：在 `ContractWorkflow` 中接入新的模型/链路时，只需遵循统一的输入输出格式，即可与 UI 解耦。

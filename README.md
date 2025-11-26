@@ -12,7 +12,7 @@ PactGuard-ERNIE-PP is an intelligent contract review tool: upload PDF/scanned do
 - **End-to-End Workflow**: `ui_workflow.py` + `contract_workflow.py` split "parsing → risk analysis → suggestion generation → result rendering" into four observable stages.
 - **AI Risk Insights**: Output risk levels, scores, matched contract clauses, and itemized revision suggestions from both legal and business dimensions, with source text positions marked in reports.
 - **History Retention and Reuse**: Analysis results and intermediate products are automatically written to `contract_analysis_results/`, `jsons/`, `mds/` for secondary verification or playback.
-- **One-Click Startup Experience**: `start_workflow.py` is responsible for detecting/launching `mcp_service.py` and starting the Streamlit UI.
+- **One-Click Startup Experience**: Run `python -m streamlit run ui_workflow.py` to automatically detect/launch `mcp_service.py` and start the Streamlit UI.
 - **Customizable LLM/OCR**: Switch LLM API Base, API Key, and OCR interfaces at any time through environment variables, enabling flexible cloud/local combinations.
 
 ## System Architecture Overview
@@ -38,7 +38,6 @@ pp-contract/
 ├── ui_utils.py                   # Caching, samples, session management
 ├── ui_ocr_utils.py               # OCR/online parsing utilities
 ├── mcp_service.py                # Document parsing/OCR backend
-├── start_workflow.py             # One-click startup script
 ├── contract_analysis_results/    # Historical results
 ├── contracts/                    # Demo contracts
 ├── pics/demo.png                 # README screenshot
@@ -73,16 +72,15 @@ pip install -r requirements.txt
 ## Startup
 
 ```bash
-python start_workflow.py
+python -m streamlit run ui_workflow.py
 ```
 
-The script will:
+The system will automatically:
 1. Check if `mcp_service.py` is already running at `http://localhost:7001`;
-2. If not running, launch the MCP service in the background and wait for health checks;
-3. Automatically execute `streamlit run ui_workflow.py --server.port 8501`;
-4. Automatically close the MCP subprocess when exiting the UI.
+2. If not running, automatically start the MCP service in the background and wait for health checks;
+3. Start the Streamlit UI (default port 8501, you can specify a different port using `--server.port` when starting).
 
-Access `http://localhost:8501` in your browser.
+The browser will automatically open or you can access the displayed address (usually `http://localhost:8501`).
 
 ## Usage Guide
 
@@ -97,7 +95,7 @@ Access `http://localhost:8501` in your browser.
 
 ## Development and Debugging
 
-- **Logging and Health Checks**: `mcp_service.py` provides a `/health` endpoint; the UI side `start_workflow.py` will continuously poll for easy fault tolerance.
+- **Logging and Health Checks**: `mcp_service.py` provides a `/health` endpoint; the UI side will automatically detect and start the MCP service for easy fault tolerance.
 - **Samples and Caching**: `ui_utils.initialize_session_state` controls cache keys; during debugging, you can delete `contract_analysis_results/` to ensure a fresh run.
 - **UI Customization**: `ui_workflow.py` contains extensive CSS, supporting custom layouts, dark themes, etc.; `ui_rendering.py` is the unified export for highlighting and risk cards.
 - **Extending LLM**: When integrating new models/pipelines in `ContractWorkflow`, just follow the unified input/output format to decouple from the UI.

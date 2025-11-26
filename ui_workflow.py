@@ -6,6 +6,11 @@ import time
 import warnings
 import urllib3
 import streamlit as st
+import subprocess
+import sys
+import requests
+import atexit
+import threading
 from contract_workflow import ContractWorkflow
 from ui_utils import (
     initialize_session_state,
@@ -28,6 +33,94 @@ from ui_rendering import (
 from ui_ocr_utils import call_online_parse_api
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# MCP 服务管理
+_mcp_process = None
+_mcp_lock = threading.Lock()
+
+
+def check_mcp_service():
+    """检查MCP服务是否运行"""
+    try:
+        response = requests.get("http://localhost:7001/health", timeout=5)
+        return response.status_code == 200
+    except:
+        return False
+
+
+def start_mcp_service():
+    """启动MCP服务（仅启动一次）"""
+    global _mcp_process
+    
+    with _mcp_lock:
+        # 如果进程已存在且正在运行，直接返回
+        if _mcp_process is not None and _mcp_process.poll() is None:
+            return True
+        
+        # 检查服务是否已在运行
+        if check_mcp_service():
+            return True
+        
+        # 启动MCP服务
+        try:
+            popen_kwargs = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+            }
+            # Windows 上隐藏控制台窗口
+            if sys.platform == "win32":
+                try:
+                    popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                except AttributeError:
+                    pass  # 如果常量不存在，忽略
+            
+            _mcp_process = subprocess.Popen(
+                [sys.executable, "mcp_service.py"],
+                **popen_kwargs
+            )
+            
+            # 等待服务启动
+            for i in range(30):
+                if check_mcp_service():
+                    return True
+                time.sleep(1)
+            
+            return False
+        except Exception as e:
+            print(f"启动MCP服务失败: {e}")
+            return False
+
+
+def cleanup_mcp_service():
+    """清理MCP服务进程"""
+    global _mcp_process
+    with _mcp_lock:
+        if _mcp_process is not None:
+            try:
+                _mcp_process.terminate()
+                _mcp_process.wait(timeout=5)
+            except:
+                try:
+                    _mcp_process.kill()
+                except:
+                    pass
+            _mcp_process = None
+
+
+# 注册退出时的清理函数
+atexit.register(cleanup_mcp_service)
+
+# 在模块加载时自动启动MCP服务
+if not check_mcp_service():
+    # 使用线程异步启动，避免阻塞Streamlit
+    def start_mcp_async():
+        if start_mcp_service():
+            print("✅ MCP服务已启动")
+        else:
+            print("⚠️ MCP服务启动失败，请手动启动: python mcp_service.py")
+    
+    thread = threading.Thread(target=start_mcp_async, daemon=True)
+    thread.start()
 
 st.set_page_config(
     page_title="合同审查系统 - 工作流版",

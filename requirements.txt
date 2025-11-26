@@ -6,7 +6,6 @@ langchain==0.1.20
 pdfminer_six==20250506
 python_a2a==0.5.10
 python-docx==1.2.0
-pywin32==311
 Requests==2.32.5
 streamlit==1.50.0
 urllib3==2.5.0
