@@ -6,9 +6,15 @@ import time
 import importlib
 from typing import Dict, List, Optional, Any
 import logging
+from pathlib import Path
 from openai import OpenAI
 import requests
+from dotenv import load_dotenv
 from ui_utils import compute_file_md5
+
+# 加载 .env 文件中的环境变量（相对项目根目录）
+PROJECT_ROOT = Path(__file__).resolve().parent
+load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 json_repair_spec = importlib.util.find_spec("json_repair")
 if json_repair_spec:

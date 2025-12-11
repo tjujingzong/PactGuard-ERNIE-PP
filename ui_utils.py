@@ -69,17 +69,17 @@ def initialize_session_state():
     if "view_mode" not in st.session_state:
         # preview: 预览界面；analysis: 分析结果界面
         st.session_state.view_mode = "preview"
-    if "llm_api_base_url" not in st.session_state:
+    if "llm_api_base_url" not in st.session_state or not st.session_state.llm_api_base_url:
         st.session_state.llm_api_base_url = os.getenv("LLM_API_BASE_URL", "")
-    if "llm_api_key" not in st.session_state:
+    if "llm_api_key" not in st.session_state or not st.session_state.llm_api_key:
         st.session_state.llm_api_key = os.getenv("LLM_API_KEY", "")
-    if "llm_model_name" not in st.session_state:
+    if "llm_model_name" not in st.session_state or not st.session_state.llm_model_name:
         st.session_state.llm_model_name = os.getenv(
             "LLM_MODEL_NAME", "ernie-4.5-turbo-128k"
         )
-    if "ocr_api_url" not in st.session_state:
+    if "ocr_api_url" not in st.session_state or not st.session_state.ocr_api_url:
         st.session_state.ocr_api_url = os.getenv("OCR_API_URL", "")
-    if "ocr_api_token" not in st.session_state:
+    if "ocr_api_token" not in st.session_state or not st.session_state.ocr_api_token:
         st.session_state.ocr_api_token = os.getenv("OCR_API_TOKEN", "")
     if "skip_uploaded_file_once" not in st.session_state:
         st.session_state.skip_uploaded_file_once = False

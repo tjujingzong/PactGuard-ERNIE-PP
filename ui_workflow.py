@@ -11,7 +11,13 @@ import sys
 import requests
 import atexit
 import threading
+from pathlib import Path
+from dotenv import load_dotenv
 from contract_workflow import ContractWorkflow
+
+# 加载 .env 文件中的环境变量（相对项目根目录）
+PROJECT_ROOT = Path(__file__).resolve().parent
+load_dotenv(PROJECT_ROOT / ".env", override=False)
 from ui_utils import (
     initialize_session_state,
     load_latest_result_by_filename,
