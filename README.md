@@ -80,9 +80,35 @@ pip install -r requirements.txt
 
 ## Startup
 
+### Default Mode (Classic)
+
 ```bash
 python -m streamlit run ui_workflow.py
 ```
+
+### Agent Debug Mode (Windows CMD)
+
+```bash
+set AGENT_FRAMEWORK=langgraph
+set AGENT_FORCE_LINEAR=1
+set AGENT_PARALLEL_RISK=1
+set AGENT_DEBUG=1
+set AGENT_LLM_TIMEOUT=60
+python -m streamlit run ui_workflow.py
+```
+
+Parameter notes:
+- `AGENT_FRAMEWORK=langgraph`: Enable Agent workflow.
+- `AGENT_FORCE_LINEAR=1`: Enable linear fallback execution (to bypass LangGraph compile hangs in some environments).
+- `AGENT_PARALLEL_RISK=1`: Run legal/business risk analysis in parallel for better speed.
+- `AGENT_DEBUG=1`: Print Agent graph node and skill debug logs.
+- `AGENT_LLM_TIMEOUT=60`: Timeout (seconds) for each LLM request.
+
+Recommended usage:
+- **First-time troubleshooting**: Keep all the flags above enabled to ensure the flow runs and logs are visible.
+- **Stable runs**: Turn off `AGENT_DEBUG` (or leave it unset) to reduce console noise.
+- **Slow network / model latency**: Increase `AGENT_LLM_TIMEOUT` (e.g., `90` or `120`).
+- **Switch back to classic flow**: Remove `AGENT_FRAMEWORK` (or switch to "Classic Mode" in UI).
 
 The system will automatically:
 1. Check if `mcp_service.py` is already running at `http://localhost:7001`;

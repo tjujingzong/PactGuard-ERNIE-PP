@@ -515,6 +515,37 @@ def main():
             type="password",
             help="如果接口需要鉴权，请填写对应token (https://aistudio.baidu.com/account/accessToken)",
         )
+
+        st.markdown("### 🤖 运行模式")
+        st.radio(
+            "选择工作流模式",
+            options=["经典模式", "Agent模式（LangGraph）"],
+            key="agent_mode",
+            help="经典模式使用原始串行流程；Agent模式使用 LangGraph + Skills。",
+        )
+        st.caption(
+            "提示：也可通过环境变量 AGENT_FRAMEWORK=langgraph 启用 Agent 模式。"
+        )
+
+        env_mode = os.environ.get("AGENT_FRAMEWORK", "").lower()
+        selected_mode = st.session_state.get("agent_mode", "经典模式")
+        expected_runtime_mode = (
+            "Agent"
+            if (selected_mode == "Agent模式（LangGraph）" or env_mode == "langgraph")
+            else "Classic"
+        )
+
+        runtime_mode = st.session_state.get("runtime_mode", expected_runtime_mode)
+        workflow_result = st.session_state.get("workflow_result")
+        if (
+            isinstance(workflow_result, dict)
+            and isinstance(workflow_result.get("agent_metadata"), dict)
+            and workflow_result.get("agent_metadata", {}).get("framework") == "langgraph"
+        ):
+            runtime_mode = "Agent"
+
+        runtime_mode_label = "Agent（LangGraph）" if runtime_mode == "Agent" else "Classic（原流程）"
+        st.info(f"当前实际运行模式：{runtime_mode_label}")
         st.divider()
 
         st.markdown("### 📁 文件选择")
@@ -862,6 +893,22 @@ def main():
 
                 suggestions = result.get("suggestions", {})
                 statistics = risk_analysis.get("statistics", {})
+
+                agent_metadata = result.get("agent_metadata", {}) if isinstance(result, dict) else {}
+                if isinstance(agent_metadata, dict) and agent_metadata.get("framework") == "langgraph":
+                    with st.expander("🧭 Agent执行轨迹", expanded=False):
+                        analysis_plan = agent_metadata.get("analysis_plan", [])
+                        execution_trace = agent_metadata.get("execution_trace", [])
+                        st.write("**分析计划（Plan）**")
+                        if analysis_plan:
+                            st.write(" → ".join(analysis_plan))
+                        else:
+                            st.write("暂无")
+                        st.write("**图节点执行轨迹（Trace）**")
+                        if execution_trace:
+                            st.write(" → ".join(execution_trace))
+                        else:
+                            st.write("暂无")
 
                 if view == "风险点":
                     risk_levels = ["全部", "重大风险", "一般风险", "低风险"]

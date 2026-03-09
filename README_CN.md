@@ -78,9 +78,35 @@ pip install -r requirements.txt
 ```
 ## 启动方式
 
+### 默认模式（Classic）
+
 ```bash
 python -m streamlit run ui_workflow.py
 ```
+
+### Agent 调试模式（Windows CMD）
+
+```bash
+set AGENT_FRAMEWORK=langgraph
+set AGENT_FORCE_LINEAR=1
+set AGENT_PARALLEL_RISK=1
+set AGENT_DEBUG=1
+set AGENT_LLM_TIMEOUT=60
+python -m streamlit run ui_workflow.py
+```
+
+参数说明：
+- `AGENT_FRAMEWORK=langgraph`：启用 Agent 工作流。
+- `AGENT_FORCE_LINEAR=1`：启用线性降级执行（用于规避部分环境中的 LangGraph 编译卡顿）。
+- `AGENT_PARALLEL_RISK=1`：法律风险与商业风险并行分析，提高速度。
+- `AGENT_DEBUG=1`：输出 Agent 图节点与 Skill 调试日志。
+- `AGENT_LLM_TIMEOUT=60`：单次 LLM 请求超时（秒）。
+
+推荐用法：
+- **首次排障**：保持以上参数不变，先确保流程可跑通并观察日志。
+- **稳定运行**：可将 `AGENT_DEBUG` 关闭（或不设置），减少控制台噪音。
+- **网络较慢/模型响应慢**：适当提高 `AGENT_LLM_TIMEOUT`（如 `90` 或 `120`）。
+- **想切回原流程**：移除 `AGENT_FRAMEWORK`（或在 UI 里切换到“经典模式”）。
 
 系统会自动：
 1. 检查 `mcp_service.py` 是否已在 `http://localhost:7001` 运行；
@@ -106,6 +132,7 @@ python -m streamlit run ui_workflow.py
 - **样例与缓存**：`ui_utils.initialize_session_state` 控制缓存键，调试时可删除 `contract_analysis_results/` 以确保全新运行。
 - **UI定制**：`ui_workflow.py` 中包含大量 CSS，支持自定义布局、暗色主题等；`ui_rendering.py` 则是高亮与风险卡片的统一出口。
 - **扩展LLM**：在 `ContractWorkflow` 中接入新的模型/链路时，只需遵循统一的输入输出格式，即可与 UI 解耦。
+- **Agent框架（新增）**：新增 `agent_workflow.py` 与 `agent_framework/`，基于 LangGraph + Skill 对现有流程进行最小侵入升级；默认仍使用原流程，可通过环境变量切换。
 
 ## 常见问题
 

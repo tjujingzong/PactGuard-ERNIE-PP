@@ -1,8 +1,10 @@
 # ui_workflow_processor.py
 # 工作流处理相关函数
 
+import os
 import streamlit as st
 from contract_workflow import ContractWorkflow
+from agent_workflow import AgentContractWorkflow
 
 
 def process_contract_workflow(file_path: str):
@@ -10,8 +12,13 @@ def process_contract_workflow(file_path: str):
     try:
         st.session_state.processing_status = "processing"
 
-        # 创建工作流实例
-        workflow = ContractWorkflow(
+        # 创建工作流实例（优先读取 UI 开关，同时兼容环境变量 AGENT_FRAMEWORK=langgraph）
+        selected_mode = st.session_state.get("agent_mode", "经典模式")
+        env_mode = os.environ.get("AGENT_FRAMEWORK", "").lower()
+        use_agent = selected_mode == "Agent模式（LangGraph）" or env_mode == "langgraph"
+
+        workflow_cls = AgentContractWorkflow if use_agent else ContractWorkflow
+        workflow = workflow_cls(
             llm_api_base_url=st.session_state.get("llm_api_base_url"),
             llm_api_key=st.session_state.get("llm_api_key"),
             llm_model_name=st.session_state.get("llm_model_name"),
@@ -20,12 +27,16 @@ def process_contract_workflow(file_path: str):
         # 步骤1: 文档解析/分析
         with st.spinner("正在解析文档并分析..."):
             md_for_analysis = None
-            if st.session_state.get("ocr_parse_result") and isinstance(st.session_state.ocr_parse_result, dict):
+            if st.session_state.get("ocr_parse_result") and isinstance(
+                st.session_state.ocr_parse_result, dict
+            ):
                 _md = st.session_state.ocr_parse_result.get("markdown_text")
                 if isinstance(_md, str) and _md.strip():
                     md_for_analysis = _md
             result = workflow.process_contract(
-                file_path, original_file_name=st.session_state.file_name, markdown_text=md_for_analysis
+                file_path,
+                original_file_name=st.session_state.file_name,
+                markdown_text=md_for_analysis,
             )
 
         if "error" in result:
@@ -42,4 +53,3 @@ def process_contract_workflow(file_path: str):
     except Exception as e:
         st.session_state.processing_status = "error"
         st.error(f"处理过程中发生错误: {str(e)}")
-
